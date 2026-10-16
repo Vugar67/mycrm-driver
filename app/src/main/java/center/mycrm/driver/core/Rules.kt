@@ -44,13 +44,23 @@ object Rules {
         UNKNOWN
     }
 
+    /**
+     * Only statuses known to be settled before the door mean "nothing to collect". Anything containing
+     * "on delivery" is collected at the door (the core's rule: payment_status includes 'on delivery').
+     * Any other / new / misspelt status → UNKNOWN: the amount is shown in red with "ask the dispatcher",
+     * never silently "nothing to collect" (v1.0.1, ORD-123330).
+     */
     fun paymentMode(paymentStatus: String?): PaymentMode {
-        val s = paymentStatus?.trim()?.lowercase(Locale.ROOT) ?: ""
+        val s = paymentStatus?.trim()?.lowercase(Locale.ROOT)?.replace(Regex("\\s+"), " ") ?: ""
         if (s.isEmpty()) return PaymentMode.UNKNOWN
-        if (s.contains("cash on delivery") || s == "cod" || s == "cash") return PaymentMode.CASH
         if (s.contains("link on delivery")) return PaymentMode.LINK
-        return PaymentMode.NONE
+        if (s.contains("on delivery") || s == "cod" || s == "cash") return PaymentMode.CASH
+        if (s.startsWith("paid") || s in SETTLED_STATUSES) return PaymentMode.NONE
+        return PaymentMode.UNKNOWN
     }
+
+    /** Settled before delivery (refs.paymentStatus on 16.10.2026), besides every "Paid …" value. */
+    val SETTLED_STATUSES: Set<String> = setOf("accounts", "crypto", "gift", "replacement")
 
     fun isPaid(paymentStatus: String?): Boolean = paymentMode(paymentStatus) == PaymentMode.NONE
 

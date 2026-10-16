@@ -228,10 +228,18 @@ fun OrderScreen(
 @Composable
 private fun MoneyCard(order: Order) {
     val (title, amount, color, hint) = when (order.paymentMode) {
-        Rules.PaymentMode.CASH -> Quad("CASH TO COLLECT", Rules.fmtAed(order.cashToCollect), Palette.Orange, "Cash on delivery")
-        Rules.PaymentMode.LINK -> Quad("PAYMENT LINK AT THE DOOR", Rules.fmtAed(order.amountDue), MaterialTheme.colorScheme.secondary, "Customer pays by payment link at the door")
-        Rules.PaymentMode.NONE -> Quad("NOTHING TO COLLECT", "", Palette.Green, order.paymentStatus ?: "")
-        Rules.PaymentMode.UNKNOWN -> Quad("PAYMENT NOT SET", Rules.fmtAed(order.amountDue), Palette.Red, "Ask the dispatcher before you take money")
+        Rules.PaymentMode.CASH -> Quad(
+            "CASH TO COLLECT", Rules.fmtAed(order.cashToCollect), Palette.Orange,
+            "Payment: " + (order.paymentStatus ?: "") + (if (order.cashToCollect <= 0.0) " — amount is 0, check with the dispatcher" else "")
+        )
+        Rules.PaymentMode.LINK -> Quad("PAYMENT LINK AT THE DOOR", Rules.fmtAed(order.amountDue), MaterialTheme.colorScheme.secondary, "Payment: " + (order.paymentStatus ?: "") + " — customer pays by link at the door")
+        Rules.PaymentMode.NONE -> Quad("NOTHING TO COLLECT", "", Palette.Green, "Payment: " + (order.paymentStatus ?: "") + " · order total " + Rules.fmtAed(order.amountDue))
+        Rules.PaymentMode.UNKNOWN -> Quad(
+            if (order.paymentStatus.isNullOrBlank()) "PAYMENT NOT SET" else "CHECK PAYMENT",
+            Rules.fmtAed(order.amountDue),
+            Palette.Red,
+            (if (order.paymentStatus.isNullOrBlank()) "" else "Payment: \"" + order.paymentStatus + "\" — ") + "ask the dispatcher before you take money"
+        )
     }
     Card(
         colors = CardDefaults.cardColors(containerColor = color),
@@ -265,7 +273,7 @@ private fun DeliveredDialog(order: Order, onConfirm: () -> Unit, onDismiss: () -
                 when (order.paymentMode) {
                     Rules.PaymentMode.CASH -> Text("Cash collected: " + Rules.fmtAed(order.cashToCollect), fontWeight = FontWeight.Bold, color = Palette.Orange)
                     Rules.PaymentMode.LINK -> Text("Paid by link: " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold)
-                    Rules.PaymentMode.UNKNOWN -> Text("Payment not set — amount " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold, color = Palette.Red)
+                    Rules.PaymentMode.UNKNOWN -> Text("Check payment with the dispatcher — amount " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold, color = Palette.Red)
                     Rules.PaymentMode.NONE -> Text("Nothing to collect", fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(8.dp))

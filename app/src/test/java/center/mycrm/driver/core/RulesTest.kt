@@ -37,6 +37,23 @@ class RulesTest {
     }
 
     @Test
+    fun unknownStatusesAreNeverNothingToCollect() {
+        // v1.0.1 (ORD-123330): anything not known as settled shows the amount in red
+        for (st in listOf("Pending", "Unpaid", "Not paid", "Cash/Card", "TBD", "x")) {
+            assertEquals(st, Rules.PaymentMode.UNKNOWN, Rules.paymentMode(st))
+        }
+        assertEquals(1500.0, Rules.amountDue(1500.0, null, null, null), 0.001)
+    }
+
+    @Test
+    fun anyOnDeliveryIsCollectedLikeTheCore() {
+        assertEquals(Rules.PaymentMode.CASH, Rules.paymentMode("Card on delivery"))
+        assertEquals(Rules.PaymentMode.CASH, Rules.paymentMode("Cash  on   delivery"))
+        assertEquals(Rules.PaymentMode.CASH, Rules.paymentMode("COD"))
+        assertEquals(Rules.PaymentMode.LINK, Rules.paymentMode("Link on delivery"))
+    }
+
+    @Test
     fun linkOnDeliveryIsNotCash() {
         assertEquals(Rules.PaymentMode.LINK, Rules.paymentMode("Link on delivery"))
         assertEquals(0.0, Rules.cashToCollect(900.0, 900.0, 0.0, 0.0, "Link on delivery"), 0.001)
