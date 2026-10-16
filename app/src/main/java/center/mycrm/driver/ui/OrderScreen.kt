@@ -229,7 +229,7 @@ fun OrderScreen(
 private fun MoneyCard(order: Order) {
     val (title, amount, color, hint) = when (order.paymentMode) {
         Rules.PaymentMode.CASH -> Quad("CASH TO COLLECT", Rules.fmtAed(order.cashToCollect), Palette.Orange, "Cash on delivery")
-        Rules.PaymentMode.LINK -> Quad("PAYMENT LINK AT THE DOOR", Rules.fmtAed(order.amountDue), MaterialTheme.colorScheme.secondary, "Customer pays by link — do not take cash")
+        Rules.PaymentMode.LINK -> Quad("PAYMENT LINK AT THE DOOR", Rules.fmtAed(order.amountDue), MaterialTheme.colorScheme.secondary, "Customer pays by payment link at the door")
         Rules.PaymentMode.NONE -> Quad("NOTHING TO COLLECT", "", Palette.Green, order.paymentStatus ?: "")
         Rules.PaymentMode.UNKNOWN -> Quad("PAYMENT NOT SET", Rules.fmtAed(order.amountDue), Palette.Red, "Ask the dispatcher before you take money")
     }
