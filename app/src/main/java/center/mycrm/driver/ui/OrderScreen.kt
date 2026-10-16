@@ -290,7 +290,7 @@ private fun FailDialog(orderNum: String, onConfirm: (String) -> Unit, onDismiss:
     val reason = remember(selected, other) {
         when {
             selected == null -> null
-            isOther -> other.trim().takeIf { it.isNotEmpty() }?.let { "Other: $it" }
+            isOther -> other.trim().takeIf { it.isNotEmpty() }
             else -> selected
         }
     }

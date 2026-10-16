@@ -76,16 +76,9 @@ class Repository(private val sb: SupabaseClient) {
                 "limit" to "200"
             )
         )
-        val orders = Rules.sortForRoute(
-            Parse.orders(raw),
-            priority = { it.priority },
-            schedDate = { it.schedDate },
-            schedFrom = { it.schedFrom },
-            orderNum = { it.orderNum }
-        )
-
-        val items: Map<String, List<OrderItem>> = if (orders.isEmpty()) emptyMap() else {
-            val ids = orders.map { it.id }.filter { it.isNotEmpty() }
+        val loaded = Parse.orders(raw)
+        val items: Map<String, List<OrderItem>> = if (loaded.isEmpty()) emptyMap() else {
+            val ids = loaded.map { it.id }.filter { it.isNotEmpty() }
             val all = ArrayList<OrderItem>()
             // in.(...) lists are kept short to stay well below URL limits
             for (chunk in ids.chunked(40)) {
@@ -101,6 +94,19 @@ class Repository(private val sb: SupabaseClient) {
             }
             all.groupBy { it.orderId }
         }
+
+        // cash = Σ(price × qty) + delivery − discount, like the core's WhatsApp message to the driver
+        val withAmounts = loaded.map { o ->
+            val lines = items[o.id]
+            if (lines.isNullOrEmpty()) o else o.copy(itemsSubtotal = Rules.itemsSubtotal(lines.map { it.price to it.quantity }))
+        }
+        val orders = Rules.sortForRoute(
+            withAmounts,
+            priority = { it.priority },
+            schedDate = { it.schedDate },
+            schedFrom = { it.schedFrom },
+            orderNum = { it.orderNum }
+        )
 
         val doneRaw = sb.select(
             "orders",

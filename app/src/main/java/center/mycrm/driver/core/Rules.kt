@@ -24,7 +24,7 @@ object Rules {
         "Customer postponed",
         "Customer refused",
         "Address problem",
-        "Could not finish route",
+        "Driver could not finish route",
         "Other…"
     )
 
@@ -54,27 +54,41 @@ object Rules {
 
     fun isPaid(paymentStatus: String?): Boolean = paymentMode(paymentStatus) == PaymentMode.NONE
 
-    /** Order total the way the core computes it: items + delivery − discount (orders.total when present). */
-    fun amountDue(total: Double?, subtotal: Double?, deliveryCharge: Double?, discount: Double?): Double {
-        val computed = (subtotal ?: 0.0) + (deliveryCharge ?: 0.0) - (discount ?: 0.0)
-        val t = total ?: computed
-        return if (t < 0) 0.0 else t
+    /**
+     * Amount due at the door, the way the core's driver WhatsApp message and ✓ Delivered dialog compute it:
+     * Σ(item price × qty) + delivery − discount. Without loaded items: orders.total, else subtotal + delivery − discount.
+     */
+    fun amountDue(
+        total: Double?,
+        subtotal: Double?,
+        deliveryCharge: Double?,
+        discount: Double?,
+        itemsSubtotal: Double? = null
+    ): Double {
+        val t = when {
+            itemsSubtotal != null -> itemsSubtotal + (deliveryCharge ?: 0.0) - (discount ?: 0.0)
+            total != null -> total
+            else -> (subtotal ?: 0.0) + (deliveryCharge ?: 0.0) - (discount ?: 0.0)
+        }
+        return if (t < 0) 0.0 else Math.round(t * 100.0) / 100.0
     }
 
-    /**
-     * Cash the driver collects at the door: the same formula as the WhatsApp message in the core,
-     * only for "Cash on delivery" (and for an empty payment status, so nothing is silently lost).
-     */
+    /** Cash the driver takes: only for "Cash on delivery". Link / paid / unknown → 0 (the UI shows the amount separately). */
     fun cashToCollect(
         total: Double?,
         subtotal: Double?,
         deliveryCharge: Double?,
         discount: Double?,
-        paymentStatus: String?
+        paymentStatus: String?,
+        itemsSubtotal: Double? = null
     ): Double = when (paymentMode(paymentStatus)) {
-        PaymentMode.CASH, PaymentMode.UNKNOWN -> amountDue(total, subtotal, deliveryCharge, discount)
-        PaymentMode.LINK, PaymentMode.NONE -> 0.0
+        PaymentMode.CASH -> amountDue(total, subtotal, deliveryCharge, discount, itemsSubtotal)
+        else -> 0.0
     }
+
+    /** Σ(price × qty) of the order lines (qty defaults to 1, price to 0 — same as the core). */
+    fun itemsSubtotal(lines: List<Pair<Double?, Double?>>): Double =
+        lines.sumOf { (price, qty) -> (price ?: 0.0) * (qty ?: 1.0) }
 
     /** Priority 1 (urgent) … 3 (normal). Accepts numbers, "1", "P1", "Urgent"; anything else → 3. */
     fun priorityOf(raw: Any?): Int {

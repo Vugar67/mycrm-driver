@@ -47,7 +47,31 @@ class RulesTest {
     fun emptyPaymentStatusShowsAmountAsUnknown() {
         assertEquals(Rules.PaymentMode.UNKNOWN, Rules.paymentMode(null))
         assertEquals(Rules.PaymentMode.UNKNOWN, Rules.paymentMode("  "))
-        assertEquals(700.0, Rules.cashToCollect(700.0, null, null, null, null), 0.001)
+        assertEquals(0.0, Rules.cashToCollect(700.0, null, null, null, null), 0.001)
+        assertEquals(700.0, Rules.amountDue(700.0, null, null, null), 0.001)
+    }
+
+    @Test
+    fun amountFromItemsLikeTheCore() {
+        // core: Σ(price × qty) + delivery − discount, qty defaults to 1, price to 0
+        val sub = Rules.itemsSubtotal(listOf(450.0 to 2.0, 100.0 to null, null to 3.0))
+        assertEquals(1000.0, sub, 0.001)
+        assertEquals(1030.0, Rules.amountDue(999.0, 999.0, 50.0, 20.0, sub), 0.001)
+        assertEquals(1030.0, Rules.cashToCollect(999.0, 999.0, 50.0, 20.0, "Cash on delivery", sub), 0.001)
+        assertEquals(0.0, Rules.cashToCollect(999.0, 999.0, 50.0, 20.0, "Link on delivery", sub), 0.001)
+    }
+
+    @Test
+    fun amountRoundsToFils() {
+        assertEquals(0.3, Rules.amountDue(null, null, null, null, 0.1 + 0.2), 0.0000001)
+    }
+
+    @Test
+    fun failReasonsMatchTheDispatcher() {
+        assertEquals(
+            listOf("Customer not answering", "Customer postponed", "Customer refused", "Address problem", "Driver could not finish route", "Other…"),
+            Rules.FAIL_REASONS
+        )
     }
 
     @Test

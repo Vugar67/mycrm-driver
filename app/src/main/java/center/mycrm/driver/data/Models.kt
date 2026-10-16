@@ -46,12 +46,14 @@ data class Order(
     val deliveredAt: String?,
     val updatedBy: String?,
     val driver: String?,
-    val contentType: String?
+    val contentType: String?,
+    /** Σ(price × qty) of the loaded order lines; null when the lines were not loaded (Done today). */
+    val itemsSubtotal: Double? = null
 ) {
     val cashToCollect: Double
-        get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus)
+        get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus, itemsSubtotal)
 
-    val amountDue: Double get() = Rules.amountDue(total, subtotal, deliveryCharge, discount)
+    val amountDue: Double get() = Rules.amountDue(total, subtotal, deliveryCharge, discount, itemsSubtotal)
 
     val paymentMode: Rules.PaymentMode get() = Rules.paymentMode(paymentStatus)
 
