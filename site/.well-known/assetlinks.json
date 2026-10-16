@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "center.mycrm.driver",
+      "sha256_cert_fingerprints": [
+        "04:65:D6:99:60:4F:1F:17:D0:EB:97:CC:97:16:7A:7C:39:D6:30:15:55:10:B0:4B:56:D2:5C:5B:0D:01:84:DE"
+      ]
+    }
+  }
+]

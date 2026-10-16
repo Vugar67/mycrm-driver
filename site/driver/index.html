@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyCRM Driver</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#FBF0D9; --card:#FFF8EA; --text:#1E1B16; --muted:#5B5547; --accent:#E8872B; --line:#E4D5B5; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#15161C; --card:#1E2028; --text:#ECECF1; --muted:#B8BCC8; --line:#2E3240; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:28px 16px 48px; }
+  h1 { margin:0; font-size:34px; font-weight:900; color:var(--accent); letter-spacing:-.5px; }
+  h1 span { color:var(--text); font-weight:600; font-size:22px; display:block; letter-spacing:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin-top:18px; }
+  .btn { display:block; text-align:center; text-decoration:none; background:var(--accent); color:#fff; font-weight:700; font-size:18px; padding:16px; border-radius:12px; }
+  .btn.alt { background:transparent; color:var(--accent); border:2px solid var(--accent); }
+  ol { padding-left:22px; margin:8px 0 0; } li { margin:6px 0; }
+  .muted { color:var(--muted); font-size:14px; }
+  .order { font-size:22px; font-weight:800; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>MyCRM <span>Driver app</span></h1>
+
+  <div class="card" id="open-card" hidden>
+    <div class="muted">Order from WhatsApp</div>
+    <div class="order" id="order-num"></div>
+    <p class="muted">If the app is installed, tap the button. If nothing happens, install the app below first.</p>
+    <a class="btn" id="open-btn" href="#">Open in MyCRM Driver</a>
+  </div>
+
+  <div class="card">
+    <strong>Install on Android</strong>
+    <ol>
+      <li>Tap <b>Download APK</b>.</li>
+      <li>When Chrome asks, allow installing apps from this source.</li>
+      <li>Open the downloaded file and tap <b>Install</b>.</li>
+      <li>Sign in with the email and password from the admin.</li>
+    </ol>
+    <p style="margin-top:16px"><a class="btn alt" href="https://github.com/vugar67/mycrm-driver/releases/latest/download/mycrm-driver.apk">Download APK</a></p>
+    <p class="muted">Android 8.0 or newer. The app updates itself: when a new version is out you see an “Update” banner.</p>
+  </div>
+
+  <p class="muted" style="margin-top:24px">Pure Peptides Lab Trading · mycrm.center</p>
+</main>
+<script>
+  (function () {
+    // /driver/?o=ORD-123456 (via 404.html redirect) or /driver/o/ORD-123456
+    var p = new URLSearchParams(location.search);
+    var num = p.get('o');
+    if (!num) {
+      var m = location.pathname.match(/\/driver\/o\/(ORD-[0-9A-Za-z-]+)/i);
+      if (m) num = m[1];
+    }
+    if (!num || !/^ORD-[0-9A-Za-z-]+$/i.test(num)) return;
+    num = num.toUpperCase();
+    document.getElementById('order-num').textContent = num;
+    document.getElementById('open-btn').href =
+      'intent://o/' + encodeURIComponent(num) + '#Intent;scheme=mycrmdriver;package=center.mycrm.driver;end';
+    document.getElementById('open-card').hidden = false;
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Not found · MyCRM</title>
+<meta name="robots" content="noindex">
+<script>
+  // GitHub Pages has no server-side routes: /driver/o/ORD-123456 lands here → send it to the driver page.
+  (function () {
+    var m = location.pathname.match(/^\/driver\/o\/(ORD-[0-9A-Za-z-]+)\/?$/i);
+    if (m) location.replace('/driver/?o=' + encodeURIComponent(m[1].toUpperCase()));
+  })();
+</script>
+<style>
+  body { margin:0; background:#FBF0D9; color:#1E1B16; font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  @media (prefers-color-scheme: dark) { body { background:#15161C; color:#ECECF1; } }
+  main { max-width:520px; margin:0 auto; padding:48px 16px; }
+  a { color:#E8872B; font-weight:700; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Page not found</h1>
+  <p><a href="/">Go to MyCRM</a></p>
+</main>
+</body>
+</html>

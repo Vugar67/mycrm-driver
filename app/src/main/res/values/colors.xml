@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_orange">#E8872B</color>
+    <color name="window_bg_light">#FBF0D9</color>
+    <color name="window_bg_dark">#15161C</color>
+</resources>
