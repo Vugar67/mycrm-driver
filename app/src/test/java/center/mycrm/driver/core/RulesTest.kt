@@ -261,4 +261,27 @@ class RulesTest {
         assertEquals("Villa 3, Apt 4, JVC, DUBAI", Rules.addressText("DUBAI", "JVC", "Villa 3", "Apt 4"))
         assertEquals("ABU DHABI", Rules.addressText("ABU DHABI", null, " ", ""))
     }
+
+    // ---- photo at the door ----
+
+    @Test
+    fun podStamp() {
+        val at = Instant.parse("2026-10-18T10:32:00Z").toEpochMilli()   // 14:32 Dubai
+        assertEquals(listOf("ORD-123330 · Rufat", "18.10.2026 14:32 Dubai", "GPS 25.20480, 55.27080 ±12 m"),
+            Rules.podStampLines("ORD-123330", "Rufat", at, 25.2048, 55.2708, 12.4f))
+        assertEquals("GPS: off", Rules.podStampLines("ORD-1", "", at, null, null, null)[2])
+        assertEquals("ORD-1", Rules.podStampLines("ORD-1", " ", at, null, null, null)[0])
+        assertEquals("GPS 25.10000, 55.30000", Rules.podStampLines("ORD-1", "R", at, 25.1, 55.3, null)[2])
+    }
+
+    @Test
+    fun podObjectNameMatchesTheBucketPolicy() {
+        val at = Instant.parse("2026-10-18T10:32:05Z").toEpochMilli()
+        val n = Rules.podObjectName("1F0E9C2A-1234-4ABC-9DEF-00112233AABB", at, 0x00ab)
+        assertEquals("1f0e9c2a-1234-4abc-9def-00112233aabb/20261018-143205-00ab.jpg", n)
+        assertTrue(n, Rules.POD_OBJECT_NAME.matches(n))
+        assertTrue(Rules.POD_OBJECT_NAME.matches(Rules.podObjectName("1f0e9c2a-1234-4abc-9def-00112233aabb", at, 0x1FFFF)))
+        assertFalse(Rules.POD_OBJECT_NAME.matches("1f0e9c2a-1234-4abc-9def-00112233aabb/../x.jpg"))
+        assertFalse(Rules.POD_OBJECT_NAME.matches("1f0e9c2a-1234-4abc-9def-00112233aabb/x.exe"))
+    }
 }

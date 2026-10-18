@@ -303,6 +303,30 @@ object Rules {
 
     fun urlEncode(s: String): String = URLEncoder.encode(s, "UTF-8")
 
+    // ---- Photo at the door (v1.1) --------------------------------------------------------------
+
+    /** "ORD-123456 · Rufat" / "18.10.2026 14:32 Dubai" / "GPS 25.20480, 55.27080 ±12 m" (or "GPS: off"). */
+    fun podStampLines(orderNum: String, driver: String, takenAtMs: Long, lat: Double?, lng: Double?, accuracyM: Float?): List<String> {
+        val t = Instant.ofEpochMilli(takenAtMs).atZone(DUBAI)
+        val time = t.format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale.ROOT)) + " Dubai"
+        val gps = if (lat == null || lng == null) "GPS: off" else String.format(
+            Locale.US, "GPS %.5f, %.5f%s", lat, lng,
+            accuracyM?.let { " ±" + Math.round(it) + " m" } ?: ""
+        )
+        return listOf(if (driver.isBlank()) orderNum else "$orderNum · $driver", time, gps)
+    }
+
+    /** Must match the bucket policy in add_driver_photos.sql. */
+    val POD_OBJECT_NAME = Regex("^[0-9a-f-]{36}/[A-Za-z0-9._-]{1,80}\\.(jpg|jpeg|png)$")
+
+    /** "<order uuid lower-case>/<yyyyMMdd-HHmmss Dubai>-<4 hex>.jpg" */
+    fun podObjectName(orderId: String, takenAtMs: Long, rnd: Int): String {
+        val t = Instant.ofEpochMilli(takenAtMs).atZone(DUBAI)
+        val stamp = t.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT))
+        val hex = Integer.toHexString(rnd and 0xFFFF).padStart(4, '0')
+        return "${orderId.trim().lowercase(Locale.ROOT)}/$stamp-$hex.jpg"
+    }
+
     /** Short, single-line quantity label: "2 pcs" / "1 pc". */
     fun pcs(qty: Double): String {
         val q = if (qty == Math.rint(qty)) qty.toLong().toString() else qty.toString()

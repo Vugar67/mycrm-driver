@@ -2,7 +2,25 @@
 
 package center.mycrm.driver.ui
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.graphics.BitmapFactory
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import center.mycrm.driver.pod.Pod
+import java.io.File
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,13 +73,68 @@ fun OrderScreen(
     items: List<OrderItem>,
     busy: Boolean,
     isEnRoute: Boolean,
+    pod: PodState?,
     onBack: () -> Unit,
-    onDelivered: () -> Unit,
+    onPrefetchFix: () -> Unit,
+    onPhotoTaken: (PodKind, File, String?) -> Unit,
+    onConfirmPod: () -> Unit,
+    onCancelPod: () -> Unit,
+    onDeliveredNoPhoto: (String) -> Unit,
     onFailed: (String) -> Unit
 ) {
     val context = LocalContext.current
-    var confirmDelivered by rememberSaveable { mutableStateOf(false) }
     var askFail by rememberSaveable { mutableStateOf(false) }
+    var noPhotoAsk by rememberSaveable { mutableStateOf(false) }   // camera closed without a photo (Delivered)
+    var skipAsk by rememberSaveable { mutableStateOf(false) }      // "Can't take photo" → reason
+    var capturePath by rememberSaveable { mutableStateOf<String?>(null) }
+    var captureKind by rememberSaveable { mutableStateOf(PodKind.DELIVERED.name) }
+    var captureReason by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val path = capturePath
+        val kind = PodKind.valueOf(captureKind)
+        if (ok && path != null && File(path).length() > 0) {
+            onPhotoTaken(kind, File(path), captureReason)
+        } else {
+            path?.let { File(it).delete() }
+            if (pod == null) {
+                if (kind == PodKind.DELIVERED) noPhotoAsk = true else askFail = true
+            }
+        }
+    }
+
+    fun launchCamera(kind: PodKind, reason: String?) {
+        val (file, uri) = Pod.newCaptureTarget(context)
+        capturePath = file.path
+        captureKind = kind.name
+        captureReason = reason
+        onPrefetchFix()
+        try {
+            camera.launch(uri)
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(context, "No camera app on this phone", Toast.LENGTH_LONG).show()
+            if (kind == PodKind.DELIVERED) noPhotoAsk = true
+        }
+    }
+
+    var pendingKind by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingReason by rememberSaveable { mutableStateOf<String?>(null) }
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
+        // granted or not — the photo is taken anyway; without permission the stamp says "GPS: off"
+        val k = pendingKind
+        pendingKind = null
+        if (k != null) launchCamera(PodKind.valueOf(k), pendingReason)
+    }
+
+    fun startCapture(kind: PodKind, reason: String?) {
+        if (!Pod.hasLocationPermission(context)) {
+            pendingKind = kind.name
+            pendingReason = reason
+            locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        } else {
+            launchCamera(kind, reason)
+        }
+    }
 
     BackHandler(onBack = onBack)
 
@@ -199,28 +272,60 @@ fun OrderScreen(
                         modifier = Modifier.weight(1f).height(60.dp)
                     ) { Text("✕  Could not deliver", color = Palette.Red, fontSize = 15.sp) }
                     Button(
-                        onClick = { confirmDelivered = true },
-                        enabled = !busy,
+                        onClick = { startCapture(PodKind.DELIVERED, null) },
+                        enabled = !busy && pod == null,
                         colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White),
                         modifier = Modifier.weight(1.2f).height(60.dp)
-                    ) { Text(if (busy) "Saving…" else "✓  Delivered", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                    ) { Text(if (busy) "Saving…" else "📷  Delivered", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
                 }
             }
         }
     }
 
-    if (confirmDelivered) {
-        DeliveredDialog(
+    if (noPhotoAsk) {
+        AlertDialog(
+            onDismissRequest = { noPhotoAsk = false },
+            title = { Text("No photo taken") },
+            text = { Text("A photo of the package at the door (villa / flat number visible) is required to close ${order.orderNum}.") },
+            confirmButton = {
+                Button(onClick = { noPhotoAsk = false; startCapture(PodKind.DELIVERED, null) }) { Text("📷 Take photo") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { noPhotoAsk = false; skipAsk = true }) { Text("Can't take photo") }
+                    TextButton(onClick = { noPhotoAsk = false }) { Text("Cancel") }
+                }
+            }
+        )
+    }
+    if (skipAsk) {
+        SkipPhotoDialog(
             order = order,
-            onConfirm = { confirmDelivered = false; onDelivered() },
-            onDismiss = { confirmDelivered = false }
+            busy = busy,
+            onConfirm = { reason -> skipAsk = false; onDeliveredNoPhoto(reason) },
+            onDismiss = { skipAsk = false }
         )
     }
     if (askFail) {
         FailDialog(
             orderNum = order.orderNum,
             onConfirm = { reason -> askFail = false; onFailed(reason) },
+            onConfirmWithPhoto = { reason -> askFail = false; startCapture(PodKind.FAILED, reason) },
             onDismiss = { askFail = false }
+        )
+    }
+    if (pod != null && pod.orderId == order.id) {
+        PodDialog(
+            order = order,
+            pod = pod,
+            onConfirm = onConfirmPod,
+            onRetake = {
+                val k = pod.kind
+                val r = pod.failReason
+                onCancelPod()
+                startCapture(k, r)
+            },
+            onCancel = onCancelPod
         )
     }
 }
@@ -261,37 +366,147 @@ private fun MoneyCard(order: Order) {
 private data class Quad(val a: String, val b: String, val c: Color, val d: String)
 
 @Composable
-private fun DeliveredDialog(order: Order, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+private fun SkipPhotoDialog(order: Order, busy: Boolean, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var other by rememberSaveable { mutableStateOf("") }
+    val isOther = selected == Pod.SKIP_REASONS.last()
+    val reason = when {
+        selected == null -> null
+        isOther -> other.trim().takeIf { it.isNotEmpty() }
+        else -> selected
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delivered ${order.orderNum}?") },
+        title = { Text("Delivered ${order.orderNum} without photo") },
         text = {
             Column {
-                Text(order.clientName ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(order.addressText, style = MaterialTheme.typography.bodyMedium)
+                Text("Why is there no photo? The dispatcher sees the reason.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
-                when (order.paymentMode) {
-                    Rules.PaymentMode.CASH -> Text("Cash collected: " + Rules.fmtAed(order.cashToCollect), fontWeight = FontWeight.Bold, color = Palette.Orange)
-                    Rules.PaymentMode.LINK -> Text("Paid by link: " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold)
-                    Rules.PaymentMode.UNKNOWN -> Text("Check payment with the dispatcher — amount " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold, color = Palette.Red)
-                    Rules.PaymentMode.NONE -> Text("Nothing to collect", fontWeight = FontWeight.Bold)
+                Pod.SKIP_REASONS.forEach { r ->
+                    Row(
+                        Modifier.fillMaxWidth().selectable(selected = selected == r, onClick = { selected = r }, role = Role.RadioButton).padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected == r, onClick = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(r, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                if (isOther) {
+                    OutlinedTextField(value = other, onValueChange = { other = it.take(200) }, label = { Text("What happened?") }, modifier = Modifier.fillMaxWidth())
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("You can undo for 5 minutes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                MoneyLine(order)
             }
         },
         confirmButton = {
             Button(
-                onClick = onConfirm,
+                onClick = { reason?.let(onConfirm) },
+                enabled = reason != null && !busy,
                 colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White)
-            ) { Text("✓ Confirm") }
+            ) { Text("✓ Delivered") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
+/** What the driver collected — one line, used in the confirm dialogs. */
 @Composable
-private fun FailDialog(orderNum: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+private fun MoneyLine(order: Order) {
+    when (order.paymentMode) {
+        Rules.PaymentMode.CASH -> Text("Cash collected: " + Rules.fmtAed(order.cashToCollect), fontWeight = FontWeight.Bold, color = Palette.Orange)
+        Rules.PaymentMode.LINK -> Text("Paid by link: " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold)
+        Rules.PaymentMode.UNKNOWN -> Text("Check payment with the dispatcher — amount " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold, color = Palette.Red)
+        Rules.PaymentMode.NONE -> Text("Nothing to collect", fontWeight = FontWeight.Bold)
+    }
+}
+
+/** The photo with its stamp, then Confirm (upload + close) / Retake / Cancel. */
+@Composable
+private fun PodDialog(order: Order, pod: PodState, onConfirm: () -> Unit, onRetake: () -> Unit, onCancel: () -> Unit) {
+    val uploading = pod.stage == PodStage.UPLOADING
+    Dialog(
+        onDismissRequest = { if (!uploading) onCancel() },
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)
+    ) {
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth(0.94f)) {
+            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    if (pod.kind == PodKind.DELIVERED) "Delivered ${order.orderNum}?" else "Could not deliver ${order.orderNum}",
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold
+                )
+                Spacer(Modifier.height(10.dp))
+                val file = pod.file
+                val bitmap = remember(file?.path, pod.stage) {
+                    if (file != null && file.exists()) runCatching { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }.getOrNull() else null
+                }
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "Photo at the door",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(10.dp))
+                    )
+                } else {
+                    Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
+                        if (pod.stage == PodStage.ERROR && file == null) {
+                            Text(pod.error ?: "No photo", color = Palette.Red)
+                        } else {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(8.dp))
+                                Text("Preparing photo…", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                if (pod.fix == null && pod.stage != PodStage.PROCESSING) {
+                    Text("GPS was not available — the photo is still accepted.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("Check that the villa / flat number or the door is visible.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                if (pod.kind == PodKind.DELIVERED) MoneyLine(order) else Text("Reason: " + (pod.failReason ?: ""), fontWeight = FontWeight.Bold)
+                if (pod.stage == PodStage.ERROR && pod.error != null && file != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(pod.error, color = Palette.Red, style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = onConfirm,
+                    enabled = file != null && (pod.stage == PodStage.READY || pod.stage == PodStage.ERROR),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (pod.kind == PodKind.DELIVERED) Palette.Green else Palette.Red,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(56.dp)
+                ) {
+                    when {
+                        uploading -> {
+                            CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Sending photo…")
+                        }
+                        pod.stage == PodStage.ERROR && file != null -> Text("Try again", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        pod.kind == PodKind.DELIVERED -> Text("✓ Confirm delivered", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                        else -> Text("Return to dispatcher", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = onRetake, enabled = !uploading) { Text("📷 Retake") }
+                    TextButton(onClick = onCancel, enabled = !uploading) { Text("Cancel") }
+                }
+                if (pod.kind == PodKind.DELIVERED) {
+                    Text("You can undo for 5 minutes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FailDialog(orderNum: String, onConfirm: (String) -> Unit, onConfirmWithPhoto: (String) -> Unit, onDismiss: () -> Unit) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var other by rememberSaveable { mutableStateOf("") }
     val isOther = selected == Rules.FAIL_REASONS.last()
@@ -308,7 +523,7 @@ private fun FailDialog(orderNum: String, onConfirm: (String) -> Unit, onDismiss:
         text = {
             Column {
                 Text(
-                    "The order goes back to the dispatcher's queue.",
+                    "The order goes back to the dispatcher's queue. A photo (closed door, wrong address) helps — optional.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -337,11 +552,14 @@ private fun FailDialog(orderNum: String, onConfirm: (String) -> Unit, onDismiss:
             }
         },
         confirmButton = {
-            Button(
-                onClick = { reason?.let(onConfirm) },
-                enabled = reason != null,
-                colors = ButtonDefaults.buttonColors(containerColor = Palette.Red, contentColor = Color.White)
-            ) { Text("Return to dispatcher") }
+            Column(horizontalAlignment = Alignment.End) {
+                Button(
+                    onClick = { reason?.let(onConfirmWithPhoto) },
+                    enabled = reason != null,
+                    colors = ButtonDefaults.buttonColors(containerColor = Palette.Red, contentColor = Color.White)
+                ) { Text("📷 Photo + return") }
+                TextButton(onClick = { reason?.let(onConfirm) }, enabled = reason != null) { Text("Return without photo") }
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

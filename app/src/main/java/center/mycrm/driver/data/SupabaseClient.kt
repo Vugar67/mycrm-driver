@@ -12,6 +12,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
@@ -171,6 +172,24 @@ class SupabaseClient(context: Context) {
         }
     }
 
+    /**
+     * POST /storage/v1/object/{bucket}/{name} — upload a file with the user's token (bucket policies decide).
+     * No upsert: the same name twice is refused, so a photo can never be replaced.
+     */
+    suspend fun uploadObject(bucket: String, name: String, file: java.io.File, contentType: String = "image/jpeg") {
+        val url = "$baseUrl/storage/v1/object/$bucket/".toHttpUrl().newBuilder().addPathSegments(name).build()
+        val media = contentType.toMediaType()
+        exec { token ->
+            Request.Builder().url(url)
+                .post(file.asRequestBody(media))
+                .apply { authHeaders(token) }
+                .header("Content-Type", contentType)
+                .header("x-upsert", "false")
+                .header("cache-control", "max-age=3600")
+                .build()
+        }
+    }
+
     private fun Request.Builder.authHeaders(token: String) {
         header("apikey", apiKey)
         header("Authorization", "Bearer $token")
@@ -210,7 +229,9 @@ class SupabaseClient(context: Context) {
     private fun postgrestMessage(text: String, code: Int): String {
         return try {
             val j = JSONObject(text)
-            val msg = j.optString("message", "")
+            val msg = j.optString("message", "").let { m ->
+                if (m.contains("row-level security", ignoreCase = true)) "Not allowed for this order (is it still yours and En Route?)" else m
+            }
             val details = j.optString("details", "")
             val hint = j.optString("hint", "")
             when {

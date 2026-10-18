@@ -233,8 +233,13 @@ fun App(vm: AppViewModel) {
                                 items = state.items[order.id] ?: emptyList(),
                                 busy = state.busy,
                                 isEnRoute = state.orders.any { it.id == order.id },
+                                pod = state.pod,
                                 onBack = vm::closeOrder,
-                                onDelivered = { vm.markDelivered(order) },
+                                onPrefetchFix = vm::prefetchFix,
+                                onPhotoTaken = { kind, file, reason -> vm.onPhotoTaken(order, kind, file, reason) },
+                                onConfirmPod = { vm.confirmPod(order) },
+                                onCancelPod = vm::cancelPod,
+                                onDeliveredNoPhoto = { reason -> vm.markDeliveredNoPhoto(order, reason) },
                                 onFailed = { reason -> vm.markFailed(order, reason) }
                             )
                         } else {

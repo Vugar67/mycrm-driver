@@ -125,14 +125,33 @@ class Repository(private val sb: SupabaseClient) {
 
     // ---- Writes: only through the DB functions (see migration add_driver_app.sql) ----------------
 
-    suspend fun markDelivered(orderId: String): JSONObject? =
-        sb.rpc("driver_mark_delivered", JSONObject().put("p_order_id", orderId).put("p_app_version", appVersion)) as? JSONObject
+    /** Uploads the stamped photo into delivery-photos/<order>/<name>.jpg and returns the object name. */
+    suspend fun uploadPhoto(orderId: String, file: java.io.File, takenAtMs: Long): String {
+        val name = center.mycrm.driver.pod.Pod.objectName(orderId, takenAtMs)
+        sb.uploadObject("delivery-photos", name, file)
+        return name
+    }
 
-    suspend fun markFailed(orderId: String, reason: String): JSONObject? =
-        sb.rpc(
-            "driver_mark_failed",
-            JSONObject().put("p_order_id", orderId).put("p_reason", reason).put("p_app_version", appVersion)
-        ) as? JSONObject
+    private fun JSONObject.putFix(fix: center.mycrm.driver.pod.Fix?): JSONObject {
+        if (fix != null) {
+            put("p_lat", fix.lat); put("p_lng", fix.lng)
+            fix.accuracyM?.let { put("p_accuracy", it.toDouble()) }
+        }
+        return this
+    }
+
+    suspend fun markDelivered(orderId: String, photoPath: String?, skipReason: String?, fix: center.mycrm.driver.pod.Fix?): JSONObject? {
+        val args = JSONObject().put("p_order_id", orderId).put("p_app_version", appVersion)
+        if (photoPath != null) args.put("p_photo_path", photoPath)
+        if (skipReason != null) args.put("p_skip_reason", skipReason)
+        return sb.rpc("driver_mark_delivered", args.putFix(fix)) as? JSONObject
+    }
+
+    suspend fun markFailed(orderId: String, reason: String, photoPath: String?, fix: center.mycrm.driver.pod.Fix?): JSONObject? {
+        val args = JSONObject().put("p_order_id", orderId).put("p_reason", reason).put("p_app_version", appVersion)
+        if (photoPath != null) args.put("p_photo_path", photoPath)
+        return sb.rpc("driver_mark_failed", args.putFix(fix)) as? JSONObject
+    }
 
     suspend fun undoDelivered(orderId: String): JSONObject? =
         sb.rpc("driver_undo_delivered", JSONObject().put("p_order_id", orderId).put("p_app_version", appVersion)) as? JSONObject
