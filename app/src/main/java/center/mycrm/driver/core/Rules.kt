@@ -374,6 +374,65 @@ object Rules {
         val q = if (qty == Math.rint(qty)) qty.toLong().toString() else qty.toString()
         return if (qty == 1.0) "$q pc" else "$q pcs"
     }
+
+    // ---- Cash taken at the door (v1.3) ---------------------------------------------------------
+
+    fun round2(x: Double): Double = Math.round(x * 100.0) / 100.0
+
+    private val CASH_PLAIN = Regex("^\\d{1,7}(\\.\\d{1,2})?$")
+    private val CASH_THOUSANDS = Regex("^\\d{1,3}(,\\d{3})+(\\.\\d{1,2})?$")
+    private val CASH_DECIMAL_COMMA = Regex("^\\d{1,7},\\d{1,2}$")
+
+    /**
+     * The amount the driver typed: "880", "880.5", "880,50", "1 200", "1,200", "1,200.50" → a number with ≤ 2 decimals.
+     * null when it is not a plain non-negative amount ("", "abc", "-5", "8.8.0", "880.505").
+     */
+    fun parseCash(input: String?): Double? {
+        val s = input?.replace(" ", "")?.replace(" ", "")?.trim() ?: return null
+        if (s.isEmpty()) return null
+        val plain = when {
+            CASH_PLAIN.matches(s) -> s
+            CASH_THOUSANDS.matches(s) -> s.replace(",", "")
+            CASH_DECIMAL_COMMA.matches(s) -> s.replace(',', '.')
+            else -> return null
+        }
+        return plain.toDoubleOrNull()?.let { round2(it) }
+    }
+
+    enum class CashKind {
+        /** exactly the due amount */
+        EXACT,
+        /** a bit more — accepted, shown as "+X over" */
+        OVER,
+        /** a lot more — the driver must confirm it once more */
+        BIG_OVER,
+        /** less than due — refused (call the dispatcher) */
+        LESS,
+        /** so much that it must be a typo — refused, same limit as the database (due × 2 + 1000) */
+        TOO_MUCH
+    }
+
+    data class CashCheck(val kind: CashKind, val received: Double, val due: Double) {
+        val over: Double get() = round2(received - due)
+        val canSave: Boolean get() = kind == CashKind.EXACT || kind == CashKind.OVER || kind == CashKind.BIG_OVER
+    }
+
+    /** Must agree with add_driver_cash.sql: less than due is refused, more than due × 2 + 1000 is refused. */
+    fun checkCash(received: Double, due: Double): CashCheck {
+        val r = round2(received)
+        val d = round2(due)
+        val kind = when {
+            r < d - 0.005 -> CashKind.LESS
+            r > d * 2 + 1000 -> CashKind.TOO_MUCH
+            r - d < 0.005 -> CashKind.EXACT
+            r - d > maxOf(100.0, d * 0.25) -> CashKind.BIG_OVER
+            else -> CashKind.OVER
+        }
+        return CashCheck(kind, r, d)
+    }
+
+    /** Cash the driver has from delivered orders: the amount he entered, or the estimate for orders closed without one. */
+    fun cashTaken(received: Double?, estimate: Double): Double = received ?: estimate
 }
 
 /** One WhatsApp template from driver_messages (sellerName null = for every seller). */

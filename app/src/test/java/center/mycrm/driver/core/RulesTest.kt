@@ -328,4 +328,51 @@ class RulesTest {
         assertEquals("Hello, this is Rufat.", Rules.fillMessage("Hello {client}, this is {driver}.", mapOf("client" to "", "driver" to "Rufat")))
         assertEquals("Line one\nLine two (ORD-1)", Rules.fillMessage("  Line one  \n Line two ( {order} ) ", mapOf("order" to "ORD-1")))
     }
+
+    // ---- cash taken at the door (v1.3) ----
+
+    @Test
+    fun parseCashAcceptsWhatDriversType() {
+        assertEquals(880.0, Rules.parseCash("880")!!, 0.0001)
+        assertEquals(880.5, Rules.parseCash(" 880.5 ")!!, 0.0001)
+        assertEquals(880.5, Rules.parseCash("880,50")!!, 0.0001)
+        assertEquals(1200.0, Rules.parseCash("1 200")!!, 0.0001)
+        assertEquals(1200.0, Rules.parseCash("1,200")!!, 0.0001)
+        assertEquals(1200.5, Rules.parseCash("1,200.50")!!, 0.0001)
+        assertEquals(0.0, Rules.parseCash("0")!!, 0.0001)
+    }
+
+    @Test
+    fun parseCashRejectsGarbage() {
+        listOf(null, "", "  ", "abc", "-5", "8.8.0", "880.505", "88O", ".5", "880.", "1,20,0", "12345678").forEach {
+            assertNull("should reject [$it]", Rules.parseCash(it))
+        }
+    }
+
+    @Test
+    fun checkCashKinds() {
+        assertEquals(Rules.CashKind.EXACT, Rules.checkCash(880.0, 880.0).kind)
+        assertEquals(Rules.CashKind.EXACT, Rules.checkCash(880.004, 880.0).kind)
+        assertEquals(Rules.CashKind.LESS, Rules.checkCash(879.99, 880.0).kind)
+        assertEquals(Rules.CashKind.OVER, Rules.checkCash(900.0, 880.0).kind)
+        assertEquals(20.0, Rules.checkCash(900.0, 880.0).over, 0.0001)
+        // big = more than max(100, 25 %)
+        assertEquals(Rules.CashKind.OVER, Rules.checkCash(1100.0, 880.0).kind)
+        assertEquals(Rules.CashKind.BIG_OVER, Rules.checkCash(1101.0, 880.0).kind)
+        assertEquals(Rules.CashKind.OVER, Rules.checkCash(300.0, 200.0).kind)
+        assertEquals(Rules.CashKind.BIG_OVER, Rules.checkCash(300.01, 200.0).kind)
+        // the database limit: due × 2 + 1000
+        assertEquals(Rules.CashKind.BIG_OVER, Rules.checkCash(2760.0, 880.0).kind)
+        assertEquals(Rules.CashKind.TOO_MUCH, Rules.checkCash(2760.01, 880.0).kind)
+        assertEquals(Rules.CashKind.TOO_MUCH, Rules.checkCash(8800.0, 880.0).kind)
+        assertTrue(Rules.checkCash(1500.0, 880.0).canSave)
+        assertFalse(Rules.checkCash(800.0, 880.0).canSave)
+        assertFalse(Rules.checkCash(8800.0, 880.0).canSave)
+    }
+
+    @Test
+    fun cashTakenPrefersTheEnteredAmount() {
+        assertEquals(900.0, Rules.cashTaken(900.0, 880.0), 0.0001)
+        assertEquals(880.0, Rules.cashTaken(null, 880.0), 0.0001)
+    }
 }

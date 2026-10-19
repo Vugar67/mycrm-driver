@@ -161,12 +161,13 @@ fun DoneTab(state: UiState, onUndo: (String) -> Unit, nowMs: Long) {
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        "Cash collected ≈ " + Rules.fmtAed(state.cashCollectedToday),
+                        (if (state.cashTodayExact) "Cash taken: " else "Cash taken ≈ ") + Rules.fmtAed(state.cashCollectedToday),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        "Estimate from Cash on delivery orders — hand over the cash as usual.",
+                        if (state.cashTodayExact) "The amounts you entered — hand over all of it."
+                        else "Some orders were closed without an amount (≈ = the due amount). Hand over all the cash you took.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -197,8 +198,13 @@ fun DoneTab(state: UiState, onUndo: (String) -> Unit, nowMs: Long) {
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (o.cashToCollect > 0) {
-                            Text("cash " + Rules.fmtAed(o.cashToCollect), style = MaterialTheme.typography.bodyMedium)
+                        if (o.paymentMode == Rules.PaymentMode.CASH && o.cashTaken > 0) {
+                            val over = if (o.cashReceived != null && o.cashDue != null) Rules.round2(o.cashReceived - o.cashDue) else 0.0
+                            Text(
+                                (if (o.cashReceived != null) "cash " else "cash ≈ ") + Rules.fmtAed(o.cashTaken) +
+                                    (if (over > 0.004) "  (+" + Rules.fmtAed(over) + ")" else ""),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
                     }
                     if (canUndo) {

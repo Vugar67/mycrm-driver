@@ -24,7 +24,9 @@ class Repository(private val sb: SupabaseClient) {
         "emirate", "city", "villa", "apt", "location_url",
         "sched_date", "sched_from", "sched_to", "driver_note", "priority",
         "payment_status", "delivery_status", "subtotal", "delivery_charge", "discount", "total",
-        "delivered_at", "updated_by", "driver", "content_type"
+        "delivered_at", "updated_by", "driver", "content_type",
+        // v1.3 (add_driver_cash.sql must be run before this version is released)
+        "cash_due", "cash_received"
     ).joinToString(",")
 
     /**
@@ -164,10 +166,12 @@ class Repository(private val sb: SupabaseClient) {
         return this
     }
 
-    suspend fun markDelivered(orderId: String, photoPath: String?, skipReason: String?, fix: center.mycrm.driver.pod.Fix?): JSONObject? {
+    /** cash = what the driver took (Cash on delivery only; the database refuses less than due). */
+    suspend fun markDelivered(orderId: String, photoPath: String?, skipReason: String?, fix: center.mycrm.driver.pod.Fix?, cash: Double?): JSONObject? {
         val args = JSONObject().put("p_order_id", orderId).put("p_app_version", appVersion)
         if (photoPath != null) args.put("p_photo_path", photoPath)
         if (skipReason != null) args.put("p_skip_reason", skipReason)
+        if (cash != null) args.put("p_cash_received", Rules.round2(cash))
         return sb.rpc("driver_mark_delivered", args.putFix(fix)) as? JSONObject
     }
 

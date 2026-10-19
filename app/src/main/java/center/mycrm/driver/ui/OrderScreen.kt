@@ -13,7 +13,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -77,12 +80,14 @@ fun OrderScreen(
     pod: PodState?,
     messages: List<MessageTemplate>,
     driverName: String,
+    cashChecking: Boolean,
     onBack: () -> Unit,
+    onCheckCash: () -> Unit,
     onPrefetchFix: () -> Unit,
     onPhotoTaken: (PodKind, File, String?) -> Unit,
-    onConfirmPod: () -> Unit,
+    onConfirmPod: (Double?) -> Unit,
     onCancelPod: () -> Unit,
-    onDeliveredNoPhoto: (String) -> Unit,
+    onDeliveredNoPhoto: (String, Double?) -> Unit,
     onFailed: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -106,6 +111,10 @@ fun OrderScreen(
     var capturePath by rememberSaveable { mutableStateOf<String?>(null) }
     var captureKind by rememberSaveable { mutableStateOf(PodKind.DELIVERED.name) }
     var captureReason by rememberSaveable { mutableStateOf<String?>(null) }
+    // v1.3: Cash on delivery — the amount taken is asked before the photo and sent with Delivered
+    var cashAsk by rememberSaveable { mutableStateOf(false) }
+    var cashTaken by rememberSaveable { mutableStateOf<Double?>(null) }
+    val isCash = order.paymentMode == Rules.PaymentMode.CASH
 
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val path = capturePath
@@ -287,7 +296,15 @@ fun OrderScreen(
                         modifier = Modifier.weight(1f).height(60.dp)
                     ) { Text("✕  Could not deliver", color = Palette.Red, fontSize = 15.sp) }
                     Button(
-                        onClick = { startCapture(PodKind.DELIVERED, null) },
+                        onClick = {
+                            if (isCash) {
+                                cashTaken = null
+                                cashAsk = true
+                                onCheckCash()
+                            } else {
+                                startCapture(PodKind.DELIVERED, null)
+                            }
+                        },
                         enabled = !busy && pod == null,
                         colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White),
                         modifier = Modifier.weight(1.2f).height(60.dp)
@@ -297,6 +314,18 @@ fun OrderScreen(
         }
     }
 
+    if (cashAsk) {
+        CashDialog(
+            order = order,
+            checking = cashChecking,
+            onConfirm = { amount ->
+                cashAsk = false
+                cashTaken = amount
+                startCapture(PodKind.DELIVERED, null)
+            },
+            onDismiss = { cashAsk = false }
+        )
+    }
     if (waPick) {
         AlertDialog(
             onDismissRequest = { waPick = false },
@@ -345,7 +374,8 @@ fun OrderScreen(
         SkipPhotoDialog(
             order = order,
             busy = busy,
-            onConfirm = { reason -> skipAsk = false; onDeliveredNoPhoto(reason) },
+            cash = cashTaken,
+            onConfirm = { reason -> skipAsk = false; onDeliveredNoPhoto(reason, cashTaken) },
             onDismiss = { skipAsk = false }
         )
     }
@@ -361,7 +391,8 @@ fun OrderScreen(
         PodDialog(
             order = order,
             pod = pod,
-            onConfirm = onConfirmPod,
+            cash = cashTaken,
+            onConfirm = { onConfirmPod(cashTaken) },
             onRetake = {
                 val k = pod.kind
                 val r = pod.failReason
@@ -409,7 +440,7 @@ private fun MoneyCard(order: Order) {
 private data class Quad(val a: String, val b: String, val c: Color, val d: String)
 
 @Composable
-private fun SkipPhotoDialog(order: Order, busy: Boolean, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+private fun SkipPhotoDialog(order: Order, busy: Boolean, cash: Double?, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     var other by rememberSaveable { mutableStateOf("") }
     val isOther = selected == Pod.SKIP_REASONS.last()
@@ -439,7 +470,7 @@ private fun SkipPhotoDialog(order: Order, busy: Boolean, onConfirm: (String) -> 
                     OutlinedTextField(value = other, onValueChange = { other = it.take(200) }, label = { Text("What happened?") }, modifier = Modifier.fillMaxWidth())
                 }
                 Spacer(Modifier.height(8.dp))
-                MoneyLine(order)
+                MoneyLine(order, cash)
             }
         },
         confirmButton = {
@@ -453,11 +484,21 @@ private fun SkipPhotoDialog(order: Order, busy: Boolean, onConfirm: (String) -> 
     )
 }
 
-/** What the driver collected — one line, used in the confirm dialogs. */
+/** What the driver collected — one line, used in the confirm dialogs. cash = the amount entered in the cash step (v1.3). */
 @Composable
-private fun MoneyLine(order: Order) {
+private fun MoneyLine(order: Order, cash: Double? = null) {
     when (order.paymentMode) {
-        Rules.PaymentMode.CASH -> Text("Cash collected: " + Rules.fmtAed(order.cashToCollect), fontWeight = FontWeight.Bold, color = Palette.Orange)
+        Rules.PaymentMode.CASH -> {
+            if (cash != null) {
+                val over = Rules.round2(cash - order.cashToCollect)
+                Text(
+                    "Cash taken: " + Rules.fmtAed(cash) + (if (over > 0.004) "  (+" + Rules.fmtAed(over) + " over)" else ""),
+                    fontWeight = FontWeight.Bold, color = Palette.Orange
+                )
+            } else {
+                Text("Cash to collect: " + Rules.fmtAed(order.cashToCollect), fontWeight = FontWeight.Bold, color = Palette.Orange)
+            }
+        }
         Rules.PaymentMode.LINK -> Text("Paid by link: " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold)
         Rules.PaymentMode.UNKNOWN -> Text("Check payment with the dispatcher — amount " + Rules.fmtAed(order.amountDue), fontWeight = FontWeight.Bold, color = Palette.Red)
         Rules.PaymentMode.NONE -> Text("Nothing to collect", fontWeight = FontWeight.Bold)
@@ -466,7 +507,7 @@ private fun MoneyLine(order: Order) {
 
 /** The photo with its stamp, then Confirm (upload + close) / Retake / Cancel. */
 @Composable
-private fun PodDialog(order: Order, pod: PodState, onConfirm: () -> Unit, onRetake: () -> Unit, onCancel: () -> Unit) {
+private fun PodDialog(order: Order, pod: PodState, cash: Double?, onConfirm: () -> Unit, onRetake: () -> Unit, onCancel: () -> Unit) {
     val uploading = pod.stage == PodStage.UPLOADING
     Dialog(
         onDismissRequest = { if (!uploading) onCancel() },
@@ -509,7 +550,7 @@ private fun PodDialog(order: Order, pod: PodState, onConfirm: () -> Unit, onReta
                 }
                 Text("Check that the villa / flat number or the door is visible.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
-                if (pod.kind == PodKind.DELIVERED) MoneyLine(order) else Text("Reason: " + (pod.failReason ?: ""), fontWeight = FontWeight.Bold)
+                if (pod.kind == PodKind.DELIVERED) MoneyLine(order, cash) else Text("Reason: " + (pod.failReason ?: ""), fontWeight = FontWeight.Bold)
                 if (pod.stage == PodStage.ERROR && pod.error != null && file != null) {
                     Spacer(Modifier.height(8.dp))
                     Text(pod.error, color = Palette.Red, style = MaterialTheme.typography.bodyMedium)
@@ -546,6 +587,106 @@ private fun PodDialog(order: Order, pod: PodState, onConfirm: () -> Unit, onReta
             }
         }
     }
+}
+
+/**
+ * v1.3 — Cash on delivery: how much cash the driver took (after change).
+ * "Exactly X" in one tap, or "Other amount" → typed. Less than due is refused (the dispatcher changes the order first);
+ * a lot more must be confirmed once more; an absurd amount (typo) is refused — the same limits as the database.
+ */
+@Composable
+private fun CashDialog(order: Order, checking: Boolean, onConfirm: (Double) -> Unit, onDismiss: () -> Unit) {
+    val due = order.cashToCollect
+    var other by rememberSaveable { mutableStateOf(false) }
+    var text by rememberSaveable { mutableStateOf("") }
+    var sure by rememberSaveable { mutableStateOf(false) }
+    val typed = Rules.parseCash(text)
+    val check = typed?.let { Rules.checkCash(it, due) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Cash from the client") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    listOfNotNull(order.orderNum, order.clientName).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                Text("DUE", style = MaterialTheme.typography.labelLarge, color = Palette.Orange, fontWeight = FontWeight.Bold)
+                Text(Rules.fmtAed(due), fontSize = 30.sp, fontWeight = FontWeight.Black, color = Palette.Orange)
+                if (checking) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Checking the amount…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = { onConfirm(due) },
+                    enabled = !checking,
+                    colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().height(56.dp)
+                ) { Text("✓ Exactly " + Rules.fmtAed(due), fontSize = 17.sp, fontWeight = FontWeight.Bold) }
+                Spacer(Modifier.height(8.dp))
+                if (!other) {
+                    OutlinedButton(
+                        onClick = { other = true },
+                        enabled = !checking,
+                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                    ) { Text("Other amount", fontSize = 16.sp) }
+                } else {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it.take(12); sure = false },
+                        label = { Text("Cash you took, AED") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    if (text.isNotBlank() && typed == null) {
+                        Text("Numbers only, for example 900 or 900.50", color = Palette.Red, style = MaterialTheme.typography.bodyMedium)
+                    } else if (check != null) {
+                        val overText = "+" + Rules.fmtAed(check.over) + " more than due. Hand over ALL the cash you took."
+                        when (check.kind) {
+                            Rules.CashKind.LESS ->
+                                Text("Less than " + Rules.fmtAed(due) + " is not allowed. Call the dispatcher — he changes the order first.",
+                                    color = Palette.Red, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Rules.CashKind.TOO_MUCH ->
+                                Text("Too much for this order — check the number.", color = Palette.Red, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Rules.CashKind.EXACT ->
+                                Text("Same as due.", style = MaterialTheme.typography.bodyMedium)
+                            Rules.CashKind.OVER ->
+                                Text(overText, color = Palette.Orange, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Rules.CashKind.BIG_OVER -> Column {
+                                Text(overText, color = Palette.Orange, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                Row(
+                                    Modifier.fillMaxWidth().selectable(selected = sure, onClick = { sure = !sure }, role = Role.Checkbox).padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(checked = sure, onCheckedChange = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Yes, the client gave me " + Rules.fmtAed(check.received), style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val canSave = check != null && check.canSave && (check.kind != Rules.CashKind.BIG_OVER || sure)
+                    Button(
+                        onClick = { if (check != null && canSave) onConfirm(check.received) },
+                        enabled = !checking && canSave,
+                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                    ) { Text(if (check != null && check.canSave) "Save " + Rules.fmtAed(check.received) + " → photo" else "Save → photo", fontSize = 16.sp) }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Enter the cash you keep after giving change.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable

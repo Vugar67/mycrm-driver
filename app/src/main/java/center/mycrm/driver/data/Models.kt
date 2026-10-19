@@ -48,12 +48,18 @@ data class Order(
     val driver: String?,
     val contentType: String?,
     /** Σ(price × qty) of the loaded order lines; null when the lines were not loaded (Done today). */
-    val itemsSubtotal: Double? = null
+    val itemsSubtotal: Double? = null,
+    /** v1.3: due frozen when the order was closed / cash actually taken (Cash on delivery, add_driver_cash.sql). */
+    val cashDue: Double? = null,
+    val cashReceived: Double? = null
 ) {
     val cashToCollect: Double
         get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus, itemsSubtotal)
 
     val amountDue: Double get() = Rules.amountDue(total, subtotal, deliveryCharge, discount, itemsSubtotal)
+
+    /** Delivered orders: the cash the driver entered, else the estimate (orders closed by the dispatcher without an amount). */
+    val cashTaken: Double get() = if (paymentMode == Rules.PaymentMode.CASH) Rules.cashTaken(cashReceived, cashDue ?: cashToCollect) else 0.0
 
     val paymentMode: Rules.PaymentMode get() = Rules.paymentMode(paymentStatus)
 
@@ -115,7 +121,9 @@ object Parse {
         deliveredAt = o.str("delivered_at"),
         updatedBy = o.str("updated_by"),
         driver = o.str("driver"),
-        contentType = o.str("content_type")
+        contentType = o.str("content_type"),
+        cashDue = o.num("cash_due"),
+        cashReceived = o.num("cash_received")
     )
 
     fun orders(arr: JSONArray): List<Order> {

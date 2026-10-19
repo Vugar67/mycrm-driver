@@ -79,12 +79,18 @@ data class UiState(
     val recentFails: List<FailRecord> = emptyList(),
     val pod: PodState? = null,
     /** WhatsApp templates from driver_messages (empty = built-in text). */
-    val messages: List<center.mycrm.driver.core.MessageTemplate> = emptyList()
+    val messages: List<center.mycrm.driver.core.MessageTemplate> = emptyList(),
+    /** v1.3: the order is being re-read before the "Cash from the client" step (fresh amount). */
+    val cashChecking: Boolean = false
 ) {
     val selectedOrder: Order?
         get() = (screen as? Screen.OrderDetail)?.let { s -> orders.firstOrNull { it.id == s.orderId } ?: doneToday.firstOrNull { it.id == s.orderId } }
 
-    val cashCollectedToday: Double get() = doneToday.sumOf { it.cashToCollect }
+    /** v1.3: the amounts the driver entered (estimate for orders closed without one) — what he hands over. */
+    val cashCollectedToday: Double get() = doneToday.sumOf { it.cashTaken }
+
+    /** false when some Cash on delivery order of today was closed without an amount (the total is then partly an estimate). */
+    val cashTodayExact: Boolean get() = doneToday.filter { it.paymentMode == Rules.PaymentMode.CASH }.all { it.cashReceived != null }
 }
 
 sealed class UiEvent {
@@ -324,11 +330,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(pod = null) }
     }
 
-    /** Upload (3 tries, keeps the file between tries) → close the order with the photo. */
-    fun confirmPod(order: Order) {
+    /** Re-read the orders before the cash step, so the driver sees the amount as it is now (the dispatcher may have changed it). */
+    fun checkCash() {
+        if (_state.value.cashChecking) return
+        viewModelScope.launch {
+            _state.update { it.copy(cashChecking = true) }
+            try { refresh() } finally { _state.update { it.copy(cashChecking = false) } }
+        }
+    }
+
+    private fun cashMissing(order: Order, cash: Double?): Boolean {
+        if (order.paymentMode == Rules.PaymentMode.CASH && cash == null) {
+            toast("Enter the cash you took first")
+            return true
+        }
+        return false
+    }
+
+    /** Upload (3 tries, keeps the file between tries) → close the order with the photo (+ the cash taken, v1.3). */
+    fun confirmPod(order: Order, cash: Double?) {
         val p = _state.value.pod ?: return
         if (p.orderId != order.id || p.file == null || p.stage == PodStage.UPLOADING || p.stage == PodStage.PROCESSING) return
         if (_state.value.busy) return
+        if (p.kind == PodKind.DELIVERED && cashMissing(order, cash)) return
         viewModelScope.launch {
             _state.update { it.copy(busy = true, pod = it.pod?.copy(stage = PodStage.UPLOADING, error = null)) }
             try {
@@ -352,8 +376,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update { it.copy(pod = it.pod?.copy(uploadedPath = path)) }
                 }
                 if (p.kind == PodKind.DELIVERED) {
-                    repo.markDelivered(order.id, path, null, p.fix)
-                    afterDelivered(order)
+                    repo.markDelivered(order.id, path, null, p.fix, if (order.paymentMode == Rules.PaymentMode.CASH) cash else null)
+                    afterDelivered(order, cash)
                 } else {
                     val reason = p.failReason ?: "Other"
                     repo.markFailed(order.id, reason, path, p.fix)
@@ -379,9 +403,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Delivered without a photo — only with a reason (logged, the dispatcher sees it). */
-    fun markDeliveredNoPhoto(order: Order, reason: String) = action {
-        repo.markDelivered(order.id, null, reason, awaitFix(3_000L))
-        afterDelivered(order)
+    fun markDeliveredNoPhoto(order: Order, reason: String, cash: Double?) {
+        if (cashMissing(order, cash)) return
+        action {
+            repo.markDelivered(order.id, null, reason, awaitFix(3_000L), if (order.paymentMode == Rules.PaymentMode.CASH) cash else null)
+            afterDelivered(order, cash)
+        }
     }
 
     /** Could not deliver without a photo (the photo is optional here). */
@@ -390,7 +417,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         afterFailed(order, reason)
     }
 
-    private suspend fun afterDelivered(order: Order) {
+    private suspend fun afterDelivered(order: Order, cash: Double? = null) {
         val deadline = System.currentTimeMillis() + Rules.UNDO_WINDOW_MS
         _state.update {
             it.copy(
@@ -400,7 +427,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 orders = it.orders.filterNot { o -> o.id == order.id }
             )
         }
-        _events.tryEmit(UiEvent.Undoable(order.id, "${order.orderNum} delivered"))
+        val cashText = if (order.paymentMode == Rules.PaymentMode.CASH && cash != null) " · cash " + Rules.fmtAed(cash) else ""
+        _events.tryEmit(UiEvent.Undoable(order.id, "${order.orderNum} delivered$cashText"))
         refresh()
     }
 
