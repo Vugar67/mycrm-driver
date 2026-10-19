@@ -125,6 +125,30 @@ class Repository(private val sb: SupabaseClient) {
 
     // ---- Writes: only through the DB functions (see migration add_driver_app.sql) ----------------
 
+    /**
+     * Active WhatsApp templates written by the admin (table driver_messages, v13.88).
+     * null = the table is not there yet (migration not run) or the call failed → the app keeps its built-in text.
+     */
+    suspend fun loadMessages(): List<center.mycrm.driver.core.MessageTemplate>? = try {
+        val arr = sb.select(
+            "driver_messages",
+            mapOf("active" to "eq.true", "select" to "id,title,body,seller_name,sort_order", "order" to "sort_order.asc,title.asc", "limit" to "200")
+        )
+        (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val title = o.str("title") ?: return@mapNotNull null
+            val body = o.str("body") ?: return@mapNotNull null
+            center.mycrm.driver.core.MessageTemplate(
+                id = o.optLong("id", 0L), title = title, body = body,
+                sellerName = o.str("seller_name"), sortOrder = o.optInt("sort_order", 100)
+            )
+        }
+    } catch (e: AuthRequiredException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
     /** Uploads the stamped photo into delivery-photos/<order>/<name>.jpg and returns the object name. */
     suspend fun uploadPhoto(orderId: String, file: java.io.File, takenAtMs: Long): String {
         val name = center.mycrm.driver.pod.Pod.objectName(orderId, takenAtMs)

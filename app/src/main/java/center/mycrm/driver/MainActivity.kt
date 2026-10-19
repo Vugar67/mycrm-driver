@@ -234,6 +234,8 @@ fun App(vm: AppViewModel) {
                                 busy = state.busy,
                                 isEnRoute = state.orders.any { it.id == order.id },
                                 pod = state.pod,
+                                messages = state.messages,
+                                driverName = state.identity?.driverName ?: "",
                                 onBack = vm::closeOrder,
                                 onPrefetchFix = vm::prefetchFix,
                                 onPhotoTaken = { kind, file, reason -> vm.onPhotoTaken(order, kind, file, reason) },

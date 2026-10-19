@@ -303,6 +303,48 @@ object Rules {
 
     fun urlEncode(s: String): String = URLEncoder.encode(s, "UTF-8")
 
+    // ---- WhatsApp messages to the customer (v1.2, table driver_messages) ------------------------
+
+    /** Built-in text when the admin has no messages yet (or the table does not exist). */
+    val DEFAULT_MESSAGES: List<MessageTemplate> = listOf(
+        MessageTemplate(0, "On my way", "Hello, this is the {seller} driver. I'm on my way with your order {order}.", null, 0)
+    )
+
+    private fun normKey(s: String?): String = s?.trim()?.replace(Regex("\\s+"), " ")?.lowercase(Locale.ROOT) ?: ""
+
+    /**
+     * Messages for one order: the seller's own messages + the general ones whose title the seller did not override.
+     * Ordered by sort_order, then title. Empty input → the built-in default.
+     */
+    fun pickMessages(all: List<MessageTemplate>, orderSeller: String?): List<MessageTemplate> {
+        if (all.isEmpty()) return DEFAULT_MESSAGES
+        val seller = normKey(orderSeller)
+        val general = all.filter { normKey(it.sellerName).isEmpty() }
+        val own = if (seller.isEmpty()) emptyList() else all.filter { normKey(it.sellerName) == seller }
+        val ownTitles = own.map { normKey(it.title) }.toSet()
+        val list = (own + general.filter { normKey(it.title) !in ownTitles })
+            .sortedWith(compareBy<MessageTemplate>({ it.sortOrder }, { it.title.lowercase(Locale.ROOT) }))
+        return list.ifEmpty { DEFAULT_MESSAGES }
+    }
+
+    /**
+     * Fills {client} {order} {driver} {seller} {amount} {window} {address} (case-insensitive). Unknown {words} stay.
+     * Empty values do not leave "Hello , this" behind: spaces before punctuation and double spaces are removed.
+     */
+    fun fillMessage(body: String, vars: Map<String, String>): String {
+        val lower = vars.mapKeys { it.key.lowercase(Locale.ROOT) }
+        val filled = Regex("\\{([A-Za-z_]+)\\}").replace(body) { m ->
+            lower[m.groupValues[1].lowercase(Locale.ROOT)] ?: m.value
+        }
+        return filled
+            .replace(Regex("[ \\t]+"), " ")
+            .replace(Regex(" +([,.!?;:])"), "$1")
+            .replace(Regex("\\( +"), "(")
+            .replace(Regex(" +\\)"), ")")
+            .lines().joinToString("\n") { it.trim() }
+            .trim()
+    }
+
     // ---- Photo at the door (v1.1) --------------------------------------------------------------
 
     /** "ORD-123456 · Rufat" / "18.10.2026 14:32 Dubai" / "GPS 25.20480, 55.27080 ±12 m" (or "GPS: off"). */
@@ -333,3 +375,12 @@ object Rules {
         return if (qty == 1.0) "$q pc" else "$q pcs"
     }
 }
+
+/** One WhatsApp template from driver_messages (sellerName null = for every seller). */
+data class MessageTemplate(
+    val id: Long,
+    val title: String,
+    val body: String,
+    val sellerName: String?,
+    val sortOrder: Int
+)

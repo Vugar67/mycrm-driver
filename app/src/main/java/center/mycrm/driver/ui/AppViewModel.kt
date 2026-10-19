@@ -77,7 +77,9 @@ data class UiState(
     val undoDeadlines: Map<String, Long> = emptyMap(),
     /** Failed deliveries this session (the order leaves the driver's list, so we remember it locally). */
     val recentFails: List<FailRecord> = emptyList(),
-    val pod: PodState? = null
+    val pod: PodState? = null,
+    /** WhatsApp templates from driver_messages (empty = built-in text). */
+    val messages: List<center.mycrm.driver.core.MessageTemplate> = emptyList()
 ) {
     val selectedOrder: Order?
         get() = (screen as? Screen.OrderDetail)?.let { s -> orders.firstOrNull { it.id == s.orderId } ?: doneToday.firstOrNull { it.id == s.orderId } }
@@ -165,6 +167,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun signOut() {
+        messagesAt = 0L
         stopPolling()
         sb.signOut()
         val keepUpdate = _state.value.update
@@ -203,8 +206,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { refresh() }
     }
 
+    private var messagesAt = 0L
+
+    /** Templates change rarely: reload at most every 5 minutes (and at sign-in). */
+    private suspend fun refreshMessages(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - messagesAt < 5 * 60_000L) return
+        messagesAt = now
+        val list = repo.loadMessages() ?: return
+        _state.update { it.copy(messages = list) }
+    }
+
     private suspend fun refresh() {
         val id = _state.value.identity ?: return
+        try { refreshMessages() } catch (_: Exception) { }
         try {
             val snap = repo.loadSnapshot(id.driverName)
             _state.update {

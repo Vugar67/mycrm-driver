@@ -63,6 +63,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import center.mycrm.driver.core.MessageTemplate
 import center.mycrm.driver.core.Rules
 import center.mycrm.driver.data.Order
 import center.mycrm.driver.data.OrderItem
@@ -74,6 +75,8 @@ fun OrderScreen(
     busy: Boolean,
     isEnRoute: Boolean,
     pod: PodState?,
+    messages: List<MessageTemplate>,
+    driverName: String,
     onBack: () -> Unit,
     onPrefetchFix: () -> Unit,
     onPhotoTaken: (PodKind, File, String?) -> Unit,
@@ -84,6 +87,20 @@ fun OrderScreen(
 ) {
     val context = LocalContext.current
     var askFail by rememberSaveable { mutableStateOf(false) }
+    var waPick by rememberSaveable { mutableStateOf(false) }
+    // v1.2: WhatsApp texts written by the admin (Directory → Driver messages); seller's own replace the general ones
+    val waMessages = remember(messages, order.sellerName) { Rules.pickMessages(messages, order.sellerName) }
+    val waVars = remember(order, driverName) {
+        mapOf(
+            "client" to (order.clientName ?: ""),
+            "order" to order.orderNum,
+            "driver" to driverName,
+            "seller" to (order.sellerName?.takeIf { it.isNotBlank() } ?: "Pure Peptides"),
+            "amount" to Rules.fmtAed(order.amountDue),
+            "window" to order.scheduleText,
+            "address" to order.addressText
+        )
+    }
     var noPhotoAsk by rememberSaveable { mutableStateOf(false) }   // camera closed without a photo (Delivered)
     var skipAsk by rememberSaveable { mutableStateOf(false) }      // "Can't take photo" → reason
     var capturePath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -175,13 +192,11 @@ fun OrderScreen(
                 ) { Text("📞  Call", fontSize = 16.sp) }
                 FilledTonalButton(
                     onClick = {
-                        openLink(
-                            context,
-                            Rules.whatsappLink(
-                                order.clientNumber,
-                                "Hello, this is the Pure Peptides driver. I'm on my way with your order ${order.orderNum}."
-                            )
-                        )
+                        if (waMessages.size == 1) {
+                            openLink(context, Rules.whatsappLink(order.clientNumber, Rules.fillMessage(waMessages[0].body, waVars)))
+                        } else {
+                            waPick = true
+                        }
                     },
                     enabled = order.phoneText.isNotEmpty(),
                     modifier = Modifier.weight(1f).height(52.dp)
@@ -282,6 +297,34 @@ fun OrderScreen(
         }
     }
 
+    if (waPick) {
+        AlertDialog(
+            onDismissRequest = { waPick = false },
+            title = { Text("WhatsApp to ${order.clientName ?: "customer"}") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    waMessages.forEach { m ->
+                        val text = Rules.fillMessage(m.body, waVars)
+                        Surface(
+                            onClick = { waPick = false; openLink(context, Rules.whatsappLink(order.clientNumber, text)) },
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        ) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(m.title, fontWeight = FontWeight.Bold)
+                                Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { waPick = false; openLink(context, Rules.whatsappLink(order.clientNumber, null)) }) { Text("Open chat without text") }
+            },
+            dismissButton = { TextButton(onClick = { waPick = false }) { Text("Cancel") } }
+        )
+    }
     if (noPhotoAsk) {
         AlertDialog(
             onDismissRequest = { noPhotoAsk = false },

@@ -284,4 +284,48 @@ class RulesTest {
         assertFalse(Rules.POD_OBJECT_NAME.matches("1f0e9c2a-1234-4abc-9def-00112233aabb/../x.jpg"))
         assertFalse(Rules.POD_OBJECT_NAME.matches("1f0e9c2a-1234-4abc-9def-00112233aabb/x.exe"))
     }
+
+    // ---- WhatsApp messages (v1.2) ----
+
+    private val gen1 = MessageTemplate(1, "On my way", "Hello {client}, this is {driver} from {seller}. Order {order}.", null, 10)
+    private val gen2 = MessageTemplate(2, "At the door", "I'm at the door with {order}.", null, 20)
+    private val gen3 = MessageTemplate(3, "Send location", "Please send your location.", "", 30)
+    private val glow1 = MessageTemplate(4, "on my  WAY", "GLOW: on the way with {order}", " glow clinic ", 5)
+    private val glow2 = MessageTemplate(5, "Thanks", "Thank you from GLOW", "GLOW Clinic", 50)
+
+    @Test
+    fun pickMessagesGeneralOnly() {
+        assertEquals(listOf(1L, 2L, 3L), Rules.pickMessages(listOf(gen2, gen3, gen1, glow1, glow2), "Other Seller").map { it.id })
+        assertEquals(listOf(1L, 2L, 3L), Rules.pickMessages(listOf(gen1, gen2, gen3, glow1), null).map { it.id })
+    }
+
+    @Test
+    fun sellerMessageReplacesTheSameTitle() {
+        // GLOW's "on my way" replaces the general one; its own "Thanks" is added; sorted by sort_order
+        assertEquals(listOf(4L, 2L, 3L, 5L), Rules.pickMessages(listOf(gen1, gen2, gen3, glow1, glow2), "GLOW CLINIC").map { it.id })
+    }
+
+    @Test
+    fun noMessagesFallsBackToTheBuiltInText() {
+        val l = Rules.pickMessages(emptyList(), "X")
+        assertEquals(1, l.size)
+        assertEquals("Hello, this is the Pure Peptides driver. I'm on my way with your order ORD-1.",
+            Rules.fillMessage(l[0].body, mapOf("seller" to "Pure Peptides", "order" to "ORD-1")))
+    }
+
+    @Test
+    fun fillMessagePlaceholders() {
+        val v = mapOf("client" to "Ahmed", "order" to "ORD-123456", "driver" to "Rufat", "seller" to "GLOW Clinic",
+            "amount" to "880 AED", "window" to "Today 14:00–16:00", "address" to "Villa 12, JVC, DUBAI")
+        assertEquals("Hello Ahmed, this is Rufat from GLOW Clinic. Order ORD-123456.", Rules.fillMessage(gen1.body, v))
+        assertEquals("Pay 880 AED. Arriving Today 14:00–16:00 at Villa 12, JVC, DUBAI.",
+            Rules.fillMessage("Pay {AMOUNT}. Arriving {Window} at {address}.", v))
+        assertEquals("Keep {unknown} as is", Rules.fillMessage("Keep {unknown} as is", v))
+    }
+
+    @Test
+    fun fillMessageCleansEmptyValues() {
+        assertEquals("Hello, this is Rufat.", Rules.fillMessage("Hello {client}, this is {driver}.", mapOf("client" to "", "driver" to "Rufat")))
+        assertEquals("Line one\nLine two (ORD-1)", Rules.fillMessage("  Line one  \n Line two ( {order} ) ", mapOf("order" to "ORD-1")))
+    }
 }
