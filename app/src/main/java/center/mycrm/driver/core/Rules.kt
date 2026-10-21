@@ -517,6 +517,49 @@ object Rules {
         }
         return out
     }
+    // ---- Trips (v1.5, add_trips.sql): staff pick-up / drop-off and tasks, one Done per trip ----
+
+    enum class TripKind(val label: String) { PICKUP("PICK UP"), DROPOFF("DROP OFF"), TASK("TASK"), OTHER("TRIP") }
+
+    fun tripKind(raw: String?): TripKind = when (raw?.trim()?.lowercase()) {
+        "pickup" -> TripKind.PICKUP
+        "dropoff" -> TripKind.DROPOFF
+        "task" -> TripKind.TASK
+        else -> TripKind.OTHER
+    }
+
+    /** "2 stops" / "1 stop". */
+    fun stopsText(n: Int): String = "$n stop" + if (n == 1) "" else "s"
+
+    /** null for today's trip; "overdue · 19.10" for an older planned one (the dispatcher did not move it). */
+    fun tripDayNote(tripDate: String?, today: LocalDate = LocalDate.now(DUBAI)): String? {
+        val d = try { LocalDate.parse(tripDate?.trim()?.take(10) ?: return null) } catch (_: Exception) { return null }
+        return when {
+            d.isBefore(today) -> "overdue · " + String.format(Locale.ROOT, "%02d.%02d", d.dayOfMonth, d.monthValue)
+            d.isAfter(today) -> String.format(Locale.ROOT, "%02d.%02d", d.dayOfMonth, d.monthValue)
+            else -> null
+        }
+    }
+
+    /** Trips in the order the driver does them: date, time (no time last), then id. */
+    fun <T> sortTrips(list: List<T>, date: (T) -> String?, time: (T) -> String?, id: (T) -> Long): List<T> =
+        list.sortedWith(
+            compareBy<T> { date(it)?.take(10) ?: "9999-12-31" }
+                .thenBy { time(it)?.trim()?.takeIf { t -> t.isNotEmpty() }?.let(::trimSeconds) ?: "99:99" }
+                .thenBy { id(it) }
+        )
+
+    /** A stop's map link as the dispatcher saved it (http(s) or geo:); anything else → no Navigate button. */
+    fun tripStopLink(mapUrl: String?): String? {
+        val u = mapUrl?.trim() ?: return null
+        return if (u.startsWith("https://", true) || u.startsWith("http://", true) || u.startsWith("geo:", true)) u else null
+    }
+
+    /** Undo after Done: 5 minutes from the server's done_at (survives an app restart); 0 = no more Undo. */
+    fun tripUndoLeftMs(doneAtIso: String?, now: Instant = Instant.now()): Long {
+        val d = parseInstant(doneAtIso) ?: return 0L
+        return (UNDO_WINDOW_MS - (now.toEpochMilli() - d.toEpochMilli())).coerceAtLeast(0L)
+    }
 }
 
 /** One WhatsApp template from driver_messages (sellerName null = for every seller). */

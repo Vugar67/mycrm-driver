@@ -110,8 +110,10 @@ fun App(vm: AppViewModel) {
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     // one clock for the Undo countdowns
-    LaunchedEffect(state.undoDeadlines.isNotEmpty()) {
-        while (state.undoDeadlines.isNotEmpty()) {
+    // v1.5: also while a trip done in the app can still be undone
+    val tripUndoOpen = state.tripsDone.any { it.doneSource == "app" && center.mycrm.driver.core.Rules.tripUndoLeftMs(it.doneAt) > 0 }
+    LaunchedEffect(state.undoDeadlines.isNotEmpty() || tripUndoOpen) {
+        while (state.undoDeadlines.isNotEmpty() || state.tripsDone.any { it.doneSource == "app" && center.mycrm.driver.core.Rules.tripUndoLeftMs(it.doneAt) > 0 }) {
             nowMs = System.currentTimeMillis()
             delay(1000)
         }
@@ -263,9 +265,10 @@ fun App(vm: AppViewModel) {
                                         onMove = vm::moveInRoute,
                                         onAdd = vm::addToRoute,
                                         onDismissWarnings = vm::dismissRouteWarnings
-                                    )
+                                    ),
+                                    onTripDone = vm::tripDone
                                 )
-                                Tab.Done -> DoneTab(state, onUndo = vm::undoDelivered, nowMs = nowMs)
+                                Tab.Done -> DoneTab(state, onUndo = vm::undoDelivered, nowMs = nowMs, onTripUndo = vm::tripUndo)
                                 Tab.Settings -> SettingsTab(
                                     state = state,
                                     appVersion = vm.appVersion,

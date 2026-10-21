@@ -78,6 +78,25 @@ data class Order(
     val phoneText: String get() = Rules.formatPhone(clientNumber)
 }
 
+/** v1.5: a stop of a trip — the place (snapshot of the dispatcher's library), its map link, the people there. */
+data class TripStop(val place: String, val mapUrl: String?, val people: String)
+
+/** v1.5: staff pick-up / drop-off or a task (add_trips.sql). Not an order: one Done for the whole trip. */
+data class Trip(
+    val id: Long,
+    val kind: String,
+    val date: String?,
+    val time: String?,
+    val note: String,
+    val status: String,
+    val doneAt: String?,
+    val doneSource: String?,
+    val stops: List<TripStop>
+) {
+    val kindInfo: Rules.TripKind get() = Rules.tripKind(kind)
+    val isDone: Boolean get() = status == "done"
+}
+
 /** Lenient JSON helpers: PostgREST returns numerics as numbers, but we accept strings too. */
 internal fun JSONObject.str(key: String): String? {
     if (!has(key) || isNull(key)) return null
@@ -134,6 +153,34 @@ object Parse {
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
             out.add(order(o))
+        }
+        return out
+    }
+
+    fun trip(o: JSONObject): Trip {
+        val arr = o.optJSONArray("stops") ?: JSONArray()
+        val stops = (0 until arr.length()).mapNotNull { i ->
+            val s = arr.optJSONObject(i) ?: return@mapNotNull null
+            TripStop(place = s.str("place") ?: "—", mapUrl = s.str("map_url"), people = s.str("people") ?: "")
+        }
+        return Trip(
+            id = o.optLong("id", 0L),
+            kind = o.str("kind") ?: "",
+            date = o.str("date"),
+            time = o.str("time"),
+            note = o.str("note") ?: "",
+            status = o.str("status") ?: "planned",
+            doneAt = o.str("done_at"),
+            doneSource = o.str("done_source"),
+            stops = stops
+        )
+    }
+
+    fun trips(arr: JSONArray): List<Trip> {
+        val out = ArrayList<Trip>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            out.add(trip(o))
         }
         return out
     }

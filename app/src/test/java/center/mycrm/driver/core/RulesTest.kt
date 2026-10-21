@@ -440,4 +440,52 @@ class RulesTest {
         val many = (1..6).map { R("O$it", it, d = "2026-10-21", f = "1${7 - it}:00", t = "1${7 - it}:30") }   // windows go backwards
         assertEquals(4, warnings(many).size)
     }
+
+    // ---- trips (v1.5) ----
+
+    @Test
+    fun tripKindsAndLabels() {
+        assertEquals(Rules.TripKind.PICKUP, Rules.tripKind("pickup"))
+        assertEquals(Rules.TripKind.DROPOFF, Rules.tripKind(" DropOff "))
+        assertEquals(Rules.TripKind.TASK, Rules.tripKind("task"))
+        assertEquals(Rules.TripKind.OTHER, Rules.tripKind(null))
+        assertEquals("PICK UP", Rules.TripKind.PICKUP.label)
+        assertEquals("1 stop", Rules.stopsText(1))
+        assertEquals("3 stops", Rules.stopsText(3))
+    }
+
+    @Test
+    fun tripDayNoteOverdueAndFuture() {
+        val today = LocalDate.of(2026, 10, 21)
+        assertNull(Rules.tripDayNote("2026-10-21", today))
+        assertEquals("overdue · 19.10", Rules.tripDayNote("2026-10-19", today))
+        assertEquals("22.10", Rules.tripDayNote("2026-10-22", today))
+        assertNull(Rules.tripDayNote(null, today))
+        assertNull(Rules.tripDayNote("garbage", today))
+    }
+
+    @Test
+    fun tripsSortedByDateTimeId() {
+        data class T(val id: Long, val d: String?, val t: String?)
+        val list = listOf(T(5, "2026-10-21", null), T(4, "2026-10-21", "09:00:00"), T(3, "2026-10-20", "18:00"), T(2, "2026-10-21", "07:30"), T(1, "2026-10-21", "07:30"))
+        val ids = Rules.sortTrips(list, { it.d }, { it.t }, { it.id }).map { it.id }
+        assertEquals(listOf(3L, 1L, 2L, 4L, 5L), ids)
+    }
+
+    @Test
+    fun tripStopLinkOnlyRealLinks() {
+        assertEquals("https://maps.app.goo.gl/x", Rules.tripStopLink(" https://maps.app.goo.gl/x "))
+        assertEquals("geo:25.1,55.2", Rules.tripStopLink("geo:25.1,55.2"))
+        assertNull(Rules.tripStopLink("Ali home"))
+        assertNull(Rules.tripStopLink(null))
+    }
+
+    @Test
+    fun tripUndoWindowFromServerTime() {
+        val done = Instant.parse("2026-10-21T08:00:00Z")
+        assertEquals(5 * 60_000L, Rules.tripUndoLeftMs("2026-10-21T08:00:00Z", done))
+        assertEquals(60_000L, Rules.tripUndoLeftMs("2026-10-21T08:00:00+00:00", done.plusSeconds(240)))
+        assertEquals(0L, Rules.tripUndoLeftMs("2026-10-21T08:00:00Z", done.plusSeconds(301)))
+        assertEquals(0L, Rules.tripUndoLeftMs(null, done))
+    }
 }

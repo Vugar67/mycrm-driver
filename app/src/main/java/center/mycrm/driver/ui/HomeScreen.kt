@@ -35,6 +35,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import center.mycrm.driver.core.Rules
 import center.mycrm.driver.data.Order
+import center.mycrm.driver.data.Trip
 
 // ---- Deliveries -------------------------------------------------------------------------------
 
@@ -66,13 +71,15 @@ fun DeliveriesTab(
     state: UiState,
     onOpen: (Order) -> Unit,
     onRefresh: () -> Unit,
-    route: RouteActions
+    route: RouteActions,
+    onTripDone: (Trip) -> Unit = {}
 ) {
-    if (state.loading && state.orders.isEmpty()) {
+    val trips = state.tripsPlanned
+    if (state.loading && state.orders.isEmpty() && state.trips.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
-    if (state.orders.isEmpty()) {
+    if (state.orders.isEmpty() && trips.isEmpty()) {
         Column(
             Modifier.fillMaxSize().padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -124,7 +131,15 @@ fun DeliveriesTab(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize()
         ) {
-            item {
+            // v1.5: trips first (staff pick-up / drop-off, tasks) — not part of the numbered route; hidden while sequencing
+            if (trips.isNotEmpty() && mode == RouteMode.NONE) {
+                item { SectionTitle(if (trips.size == 1) "TRIP" else "TRIPS · ${trips.size}") }
+                items(trips, key = { "t" + it.id }) { t -> TripCard(t, busy = state.busy, onDone = { onTripDone(t) }) }
+                if (state.orders.isEmpty()) item {
+                    Text("No orders to deliver right now.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(4.dp))
+                }
+            }
+            if (state.orders.isNotEmpty()) item {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(
                         "${state.orders.size} to deliver · cash on route " + Rules.fmtAed(totalCash),
@@ -231,6 +246,70 @@ fun DeliveriesTab(
                 }
             },
             confirmButton = { TextButton(onClick = route.onDismissWarnings) { Text("OK") } }
+        )
+    }
+}
+
+/** v1.5: a trip — kind, time, the stops with their people and a Navigate per stop, the note, one Done. */
+@Composable
+fun TripCard(trip: Trip, busy: Boolean, onDone: () -> Unit) {
+    val context = LocalContext.current
+    var confirm by remember { mutableStateOf(false) }
+    val kind = trip.kindInfo
+    val color = when (kind) {
+        Rules.TripKind.PICKUP -> Color(0xFF3B82F6)
+        Rules.TripKind.DROPOFF -> Color(0xFF8B5CF6)
+        else -> Palette.Orange
+    }
+    val dayNote = Rules.tripDayNote(trip.date)
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = BorderStroke(2.dp, color),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Chip(kind.label, color, Color.White)
+                Spacer(Modifier.width(8.dp))
+                Text(trip.time?.take(5) ?: "", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                if (dayNote != null) Text(dayNote, color = Palette.Red, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                else Text(Rules.stopsText(trip.stops.size), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+            }
+            Spacer(Modifier.height(8.dp))
+            trip.stops.forEachIndexed { i, st ->
+                val link = Rules.tripStopLink(st.mapUrl)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("${i + 1}. ${st.place}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        if (st.people.isNotBlank()) Text(st.people, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                    if (link != null) {
+                        OutlinedButton(onClick = { openLink(context, link) }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("🧭 Navigate") }
+                    }
+                }
+            }
+            if (trip.note.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Text("📝 ${trip.note}", style = MaterialTheme.typography.bodyMedium)
+            }
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { confirm = true }, enabled = !busy,
+                colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) { Text("✓ Done", fontWeight = FontWeight.Bold) }
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("${kind.label.lowercase().replaceFirstChar { it.uppercase() }} done?") },
+            text = { Text(trip.stops.joinToString("\n") { "• " + it.place + (if (it.people.isNotBlank()) " — " + it.people else "") }) },
+            confirmButton = { TextButton(onClick = { confirm = false; onDone() }) { Text("Yes, done") } },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancel") } }
         )
     }
 }
@@ -358,7 +437,7 @@ fun OrderCard(
 // ---- Done today -------------------------------------------------------------------------------
 
 @Composable
-fun DoneTab(state: UiState, onUndo: (String) -> Unit, nowMs: Long) {
+fun DoneTab(state: UiState, onUndo: (String) -> Unit, nowMs: Long, onTripUndo: (Trip) -> Unit = {}) {
     LazyColumn(
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -372,7 +451,7 @@ fun DoneTab(state: UiState, onUndo: (String) -> Unit, nowMs: Long) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Today", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     Text(
-                        "${state.doneToday.size} delivered",
+                        "${state.doneToday.size} delivered" + if (state.tripsDone.isNotEmpty()) " · ${state.tripsDone.size} trip" + (if (state.tripsDone.size == 1) "" else "s") else "",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -428,6 +507,30 @@ fun DoneTab(state: UiState, onUndo: (String) -> Unit, nowMs: Long) {
                         val left = ((deadline!! - nowMs) / 1000).coerceAtLeast(0)
                         OutlinedButton(onClick = { onUndo(o.id) }, enabled = !state.busy) {
                             Text("↩ Undo " + String.format("%d:%02d", left / 60, left % 60))
+                        }
+                    }
+                }
+            }
+        }
+        if (state.tripsDone.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(8.dp))
+                SectionTitle("TRIPS DONE TODAY · ${state.tripsDone.size}")
+            }
+            items(state.tripsDone, key = { "td" + it.id }) { t ->
+                val left = Rules.tripUndoLeftMs(t.doneAt, java.time.Instant.ofEpochMilli(nowMs))
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("✓ ${t.kindInfo.label}  ·  ${Rules.fmtTimeDubai(t.doneAt)}", fontWeight = FontWeight.Bold)
+                            Text(t.stops.joinToString(" → ") { it.place }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (t.doneSource != null && t.doneSource != "app") Text("closed by the dispatcher", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (t.doneSource == "app" && left > 0) {
+                            val sec = left / 1000
+                            OutlinedButton(onClick = { onTripUndo(t) }, enabled = !state.busy) {
+                                Text("↩ Undo " + String.format("%d:%02d", sec / 60, sec % 60))
+                            }
                         }
                     }
                 }

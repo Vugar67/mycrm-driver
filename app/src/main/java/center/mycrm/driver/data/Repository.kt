@@ -12,7 +12,9 @@ data class Snapshot(
     val items: Map<String, List<OrderItem>>,
     val doneToday: List<Order>,
     /** false = orders.route_seq is not in the database yet (add_driver_route.sql not run) → the route UI is hidden. */
-    val routeAvailable: Boolean = true
+    val routeAvailable: Boolean = true,
+    /** v1.5: planned trips up to today + trips done today (empty when add_trips.sql is not run). */
+    val trips: List<Trip> = emptyList()
 )
 
 /** Thrown when the account exists but is not a usable driver account. */
@@ -143,8 +145,29 @@ class Repository(private val sb: SupabaseClient) {
                 "limit" to "200"
             )
         )
-        return Snapshot(orders, items, Parse.orders(doneRaw), routeAvailable = !routeMissing)
+        return Snapshot(orders, items, Parse.orders(doneRaw), routeAvailable = !routeMissing, trips = loadTrips())
     }
+
+    /** v1.5: without add_trips.sql the function is missing → no trips (asked again every 5 minutes). */
+    @Volatile private var tripsMissingAt = 0L
+
+    private suspend fun loadTrips(): List<Trip> {
+        if (tripsMissingAt != 0L && System.currentTimeMillis() - tripsMissingAt < 5 * 60_000L) return emptyList()
+        return try {
+            val r = sb.rpc("driver_my_trips", JSONObject())
+            tripsMissingAt = 0L
+            val list = if (r is JSONArray) Parse.trips(r) else emptyList()
+            Rules.sortTrips(list, { it.date }, { it.time }, { it.id })
+        } catch (e: SupabaseException) {
+            if (e.status == 404 || e.message?.contains("driver_my_trips") == true) { tripsMissingAt = System.currentTimeMillis(); emptyList() } else throw e
+        }
+    }
+
+    suspend fun tripDone(tripId: Long): JSONObject? =
+        sb.rpc("driver_trip_done", JSONObject().put("p_id", tripId).put("p_app_version", appVersion)) as? JSONObject
+
+    suspend fun tripUndo(tripId: Long): JSONObject? =
+        sb.rpc("driver_trip_undo", JSONObject().put("p_id", tripId).put("p_app_version", appVersion)) as? JSONObject
 
     // ---- Writes: only through the DB functions (see migration add_driver_app.sql) ----------------
 

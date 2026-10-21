@@ -94,8 +94,13 @@ data class UiState(
     /** A route write is pending or in flight (debounced ▲▼). */
     val routeSaving: Boolean = false,
     /** Shown once after Done when the sequence looks odd (urgent not first, windows broken). */
-    val routeWarnings: List<String>? = null
+    val routeWarnings: List<String>? = null,
+    /** v1.5: trips (staff pick-up / drop-off, tasks) — planned up to today and done today. */
+    val trips: List<center.mycrm.driver.data.Trip> = emptyList()
 ) {
+    val tripsPlanned: List<center.mycrm.driver.data.Trip> get() = trips.filter { !it.isDone }
+    val tripsDone: List<center.mycrm.driver.data.Trip> get() = trips.filter { it.isDone }
+
     val selectedOrder: Order?
         get() = (screen as? Screen.OrderDetail)?.let { s -> orders.firstOrNull { it.id == s.orderId } ?: doneToday.firstOrNull { it.id == s.orderId } }
 
@@ -257,6 +262,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     items = snap.items,
                     doneToday = snap.doneToday,
                     routeAvailable = snap.routeAvailable,
+                    trips = snap.trips,
                     lastUpdateMs = System.currentTimeMillis(),
                     offline = false,
                     loading = false
@@ -472,6 +478,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         repo.undoDelivered(orderId)
         _state.update { it.copy(undoDeadlines = it.undoDeadlines - orderId, screen = Screen.Home, tab = Tab.Deliveries) }
         toast("Back to En Route")
+        refresh()
+    }
+
+    // ---- Trips (v1.5) ------------------------------------------------------------------------------
+
+    fun tripDone(trip: center.mycrm.driver.data.Trip) = action {
+        repo.tripDone(trip.id)
+        // optimistic: show it as done right away (Undo counts from now), the refresh brings the server's done_at
+        _state.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) it.copy(status = "done", doneAt = java.time.Instant.now().toString(), doneSource = "app") else it }) }
+        toast("✓ ${trip.kindInfo.label.lowercase().replaceFirstChar { it.uppercase() }} done — Undo is on the Done tab for 5 minutes")
+        refresh()
+    }
+
+    fun tripUndo(trip: center.mycrm.driver.data.Trip) = action {
+        repo.tripUndo(trip.id)
+        toast("Trip is back in My deliveries")
+        _state.update { it.copy(tab = Tab.Deliveries) }
         refresh()
     }
 
