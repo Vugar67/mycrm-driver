@@ -549,8 +549,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun finishAdjust() {
         if (_state.value.routeMode != RouteMode.ADJUST) return
         _state.update { it.copy(routeMode = RouteMode.NONE) }
-        val ids = pendingRoute ?: currentRouteIds()
-        writeRoute(ids, immediate = true, warn = true)
+        val ids = pendingRoute
+        if (ids != null) {
+            writeRoute(ids, immediate = true, warn = true)
+        } else {
+            // nothing changed since the last save — no write, just the check
+            val w = Rules.routeWarnings(_state.value.routedOrders, { it.priority }, { it.orderNum }, { it.schedDate }, { it.schedFrom }, { it.schedTo })
+            _state.update { it.copy(routeWarnings = w.takeIf { l -> l.isNotEmpty() }) }
+        }
     }
 
     fun moveInRoute(orderId: String, delta: Int) {

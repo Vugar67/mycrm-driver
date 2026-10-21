@@ -100,7 +100,8 @@ fun DeliveriesTab(
     val urgent = state.urgentNotFirst
 
     Column(Modifier.fillMaxSize()) {
-        if (routeOn) {
+        // the bar stays while a mode is on, even if the list shrinks to one order — Done / Cancel must stay reachable
+        if (mode != RouteMode.NONE) {
             when (mode) {
                 RouteMode.SEQUENCE -> RouteBar(
                     text = if (state.sequenceIds.isEmpty()) "Tap the orders in the order you will deliver them"
