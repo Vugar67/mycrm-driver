@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 sealed class Screen {
     data object Loading : Screen()
@@ -40,6 +41,9 @@ enum class Tab { Deliveries, Done, Settings }
 data class FailRecord(val orderNum: String, val clientName: String?, val reason: String, val atMs: Long)
 
 enum class PodKind { DELIVERED, FAILED }
+
+/** v1.4: NONE = normal list · SEQUENCE = tap the orders in delivery order · ADJUST = ▲▼ / Add to route. */
+enum class RouteMode { NONE, SEQUENCE, ADJUST }
 enum class PodStage { PROCESSING, READY, UPLOADING, ERROR }
 
 /** Photo at the door (v1.1): taken → stamped → confirmed → uploaded → order closed. */
@@ -81,7 +85,16 @@ data class UiState(
     /** WhatsApp templates from driver_messages (empty = built-in text). */
     val messages: List<center.mycrm.driver.core.MessageTemplate> = emptyList(),
     /** v1.3: the order is being re-read before the "Cash from the client" step (fresh amount). */
-    val cashChecking: Boolean = false
+    val cashChecking: Boolean = false,
+    /** v1.4: false until add_driver_route.sql is run (the select falls back without route_seq) → route UI hidden. */
+    val routeAvailable: Boolean = true,
+    val routeMode: RouteMode = RouteMode.NONE,
+    /** Sequence mode: order ids in the order they were tapped. */
+    val sequenceIds: List<String> = emptyList(),
+    /** A route write is pending or in flight (debounced ▲▼). */
+    val routeSaving: Boolean = false,
+    /** Shown once after Done when the sequence looks odd (urgent not first, windows broken). */
+    val routeWarnings: List<String>? = null
 ) {
     val selectedOrder: Order?
         get() = (screen as? Screen.OrderDetail)?.let { s -> orders.firstOrNull { it.id == s.orderId } ?: doneToday.firstOrNull { it.id == s.orderId } }
@@ -91,6 +104,13 @@ data class UiState(
 
     /** false when some Cash on delivery order of today was closed without an amount (the total is then partly an estimate). */
     val cashTodayExact: Boolean get() = doneToday.filter { it.paymentMode == Rules.PaymentMode.CASH }.all { it.cashReceived != null }
+
+    /** v1.4: orders placed in the route, in route order (orders are already sorted by Rules.applyRoute). */
+    val routedOrders: List<Order> get() = orders.filter { it.routeSeq != null }
+    val hasRoute: Boolean get() = orders.any { it.routeSeq != null }
+    /** The next stop: the first placed order. */
+    val nextOrderId: String? get() = orders.firstOrNull()?.takeIf { it.routeSeq != null }?.id
+    val urgentNotFirst: String? get() = Rules.urgentNotFirst(routedOrders, { it.priority }, { it.orderNum })
 }
 
 sealed class UiEvent {
@@ -174,6 +194,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun signOut() {
         messagesAt = 0L
+        pendingRoute = null
+        routeJob?.cancel()
         stopPolling()
         sb.signOut()
         val keepUpdate = _state.value.update
@@ -230,9 +252,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val snap = repo.loadSnapshot(id.driverName)
             _state.update {
                 it.copy(
-                    orders = snap.orders,
+                    // a route write still pending → keep the driver's latest order on top of the fresh data
+                    orders = pendingRoute?.let { ids -> withLocalRoute(snap.orders, ids) } ?: snap.orders,
                     items = snap.items,
                     doneToday = snap.doneToday,
+                    routeAvailable = snap.routeAvailable,
                     lastUpdateMs = System.currentTimeMillis(),
                     offline = false,
                     loading = false
@@ -475,6 +499,114 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _events.tryEmit(UiEvent.Toast(text))
     }
 
+    // ---- The driver's own delivery sequence (v1.4) ------------------------------------------------
+
+    /** The route as the driver last set it on this phone, until the server confirms it (null = nothing pending). */
+    private var pendingRoute: List<String>? = null
+    private var routeJob: Job? = null
+    /** Writes go out one after another, so an older ▲▼ can never overtake a newer one on the server. */
+    private val routeLock = kotlinx.coroutines.sync.Mutex()
+
+    /** The list with [ids] as the route: 1..N for the ids, no number for the rest, the usual order underneath. */
+    private fun withLocalRoute(list: List<Order>, ids: List<String>): List<Order> {
+        val pos = ids.withIndex().associate { it.value to it.index + 1 }
+        val base = Rules.sortForRoute(list.map { o -> o.copy(routeSeq = pos[o.id]) },
+            priority = { it.priority }, schedDate = { it.schedDate }, schedFrom = { it.schedFrom }, orderNum = { it.orderNum })
+        return Rules.applyRoute(base) { it.routeSeq }
+    }
+
+    private fun currentRouteIds(): List<String> = _state.value.routedOrders.map { it.id }
+
+    fun startSequence() {
+        if (!_state.value.routeAvailable) return
+        _state.update { it.copy(routeMode = RouteMode.SEQUENCE, sequenceIds = emptyList(), routeWarnings = null) }
+    }
+
+    fun tapSequence(orderId: String) {
+        _state.update { if (it.routeMode == RouteMode.SEQUENCE) it.copy(sequenceIds = Rules.toggleInSequence(it.sequenceIds, orderId)) else it }
+    }
+
+    /** Done in Sequence mode: the tapped orders become 1..N, the rest go to the end without a number. */
+    fun finishSequence() {
+        val st = _state.value
+        if (st.routeMode != RouteMode.SEQUENCE) return
+        val known = st.orders.map { it.id }.toSet()
+        val ids = st.sequenceIds.filter { it in known }   // an order reassigned meanwhile is simply left out
+        _state.update { it.copy(routeMode = RouteMode.NONE, sequenceIds = emptyList()) }
+        writeRoute(ids, immediate = true, warn = true)
+    }
+
+    fun cancelRouteMode() {
+        _state.update { it.copy(routeMode = RouteMode.NONE, sequenceIds = emptyList()) }
+    }
+
+    fun startAdjust() {
+        if (!_state.value.routeAvailable) return
+        _state.update { it.copy(routeMode = RouteMode.ADJUST, routeWarnings = null) }
+    }
+
+    /** Done in ▲▼ mode: send what is still pending right away and check the sequence once. */
+    fun finishAdjust() {
+        if (_state.value.routeMode != RouteMode.ADJUST) return
+        _state.update { it.copy(routeMode = RouteMode.NONE) }
+        val ids = pendingRoute ?: currentRouteIds()
+        writeRoute(ids, immediate = true, warn = true)
+    }
+
+    fun moveInRoute(orderId: String, delta: Int) {
+        val cur = pendingRoute ?: currentRouteIds()
+        val ids = Rules.moveInRoute(cur, orderId, delta)
+        if (ids != cur) writeRoute(ids, immediate = false, warn = false)
+    }
+
+    fun addToRoute(orderId: String) {
+        val cur = pendingRoute ?: currentRouteIds()
+        val ids = Rules.addToRoute(cur, orderId)
+        if (ids != cur) writeRoute(ids, immediate = false, warn = false)
+    }
+
+    fun dismissRouteWarnings() {
+        _state.update { it.copy(routeWarnings = null) }
+    }
+
+    /**
+     * Shows the new order at once, then saves it: immediately (Done) or 1.5 s after the last ▲▼ tap.
+     * The server's answer is final: a refused or failed write → the list goes back to what the server has.
+     */
+    private fun writeRoute(ids: List<String>, immediate: Boolean, warn: Boolean) {
+        pendingRoute = ids
+        _state.update { it.copy(orders = withLocalRoute(it.orders, ids), routeSaving = true) }
+        routeJob?.cancel()
+        routeJob = viewModelScope.launch {
+            if (!immediate) delay(ROUTE_DEBOUNCE_MS)
+            try {
+                routeLock.withLock { repo.setRoute(ids) }
+                if (pendingRoute == ids) pendingRoute = null
+                if (warn) {
+                    val routed = _state.value.routedOrders
+                    val w = Rules.routeWarnings(routed, { it.priority }, { it.orderNum }, { it.schedDate }, { it.schedFrom }, { it.schedTo })
+                    _state.update { it.copy(routeWarnings = w.takeIf { l -> l.isNotEmpty() }) }
+                }
+            } catch (e: AuthRequiredException) {
+                pendingRoute = null
+                signOut()
+                _state.update { it.copy(loginError = "Session expired — please sign in again") }
+                return@launch
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e   // a newer ▲▼ tap replaced this write — nothing to report
+            } catch (e: SupabaseException) {
+                pendingRoute = null
+                toast(e.message ?: "Server refused the route")
+            } catch (e: Exception) {
+                pendingRoute = null
+                toast("No connection — the route was NOT saved. Try again.")
+            } finally {
+                if (pendingRoute == null) _state.update { it.copy(routeSaving = false) }
+            }
+            refresh()
+        }
+    }
+
     // ---- Self-update -------------------------------------------------------------------------
 
     fun checkUpdate() {
@@ -507,5 +639,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         const val POLL_MS = 10_000L
+        const val ROUTE_DEBOUNCE_MS = 1_500L
     }
 }

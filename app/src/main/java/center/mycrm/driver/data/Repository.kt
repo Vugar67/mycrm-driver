@@ -3,13 +3,16 @@ package center.mycrm.driver.data
 import android.os.Build
 import center.mycrm.driver.BuildConfig
 import center.mycrm.driver.core.Rules
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** The driver's working set: En Route orders with their items, and today's delivered orders. */
 data class Snapshot(
     val orders: List<Order>,
     val items: Map<String, List<OrderItem>>,
-    val doneToday: List<Order>
+    val doneToday: List<Order>,
+    /** false = orders.route_seq is not in the database yet (add_driver_route.sql not run) → the route UI is hidden. */
+    val routeAvailable: Boolean = true
 )
 
 /** Thrown when the account exists but is not a usable driver account. */
@@ -27,7 +30,26 @@ class Repository(private val sb: SupabaseClient) {
         "delivered_at", "updated_by", "driver", "content_type",
         // v1.3 (add_driver_cash.sql must be run before this version is released)
         "cash_due", "cash_received"
-    ).joinToString(",")
+    )
+
+    /** v1.4: the route column is optional — without add_driver_route.sql the select is retried without it. */
+    private val routeColumn = "route_seq"
+    @Volatile private var routeMissing = false
+
+    private fun columns(withRoute: Boolean): String =
+        (if (withRoute) orderColumns + routeColumn else orderColumns).joinToString(",")
+
+    private suspend fun selectOrders(params: Map<String, String>): JSONArray {
+        if (!routeMissing) {
+            try {
+                return sb.select("orders", params + ("select" to columns(true)))
+            } catch (e: SupabaseException) {
+                // "column orders.route_seq does not exist" → migration not run; carry on without the route
+                if (e.status == 400 && e.message?.contains(routeColumn) == true) routeMissing = true else throw e
+            }
+        }
+        return sb.select("orders", params + ("select" to columns(false)))
+    }
 
     /**
      * Resolves who is signed in: profile must have role 'driver' and be active, and a drivers row
@@ -67,13 +89,11 @@ class Repository(private val sb: SupabaseClient) {
     }
 
     suspend fun loadSnapshot(driverName: String): Snapshot {
-        val raw = sb.select(
-            "orders",
+        val raw = selectOrders(
             mapOf(
                 "driver" to "eq.$driverName",
                 "delivery_status" to "eq.En Route",
                 "deleted" to "not.is.true",
-                "select" to orderColumns,
                 "order" to "created_at.asc",
                 "limit" to "200"
             )
@@ -102,27 +122,28 @@ class Repository(private val sb: SupabaseClient) {
             val lines = items[o.id]
             if (lines.isNullOrEmpty()) o else o.copy(itemsSubtotal = Rules.itemsSubtotal(lines.map { it.price to it.quantity }))
         }
-        val orders = Rules.sortForRoute(
-            withAmounts,
-            priority = { it.priority },
-            schedDate = { it.schedDate },
-            schedFrom = { it.schedFrom },
-            orderNum = { it.orderNum }
-        )
+        // the usual order (priority → date → window → number), then the driver's own sequence on top of it (v1.4)
+        val orders = Rules.applyRoute(
+            Rules.sortForRoute(
+                withAmounts,
+                priority = { it.priority },
+                schedDate = { it.schedDate },
+                schedFrom = { it.schedFrom },
+                orderNum = { it.orderNum }
+            )
+        ) { it.routeSeq }
 
-        val doneRaw = sb.select(
-            "orders",
+        val doneRaw = selectOrders(
             mapOf(
                 "driver" to "eq.$driverName",
                 "delivery_status" to "eq.Delivered",
                 "delivered_at" to "gte." + Rules.todayStartDubaiIso(),
                 "deleted" to "not.is.true",
-                "select" to orderColumns,
                 "order" to "delivered_at.desc",
                 "limit" to "200"
             )
         )
-        return Snapshot(orders, items, Parse.orders(doneRaw))
+        return Snapshot(orders, items, Parse.orders(doneRaw), routeAvailable = !routeMissing)
     }
 
     // ---- Writes: only through the DB functions (see migration add_driver_app.sql) ----------------
@@ -179,6 +200,13 @@ class Repository(private val sb: SupabaseClient) {
         val args = JSONObject().put("p_order_id", orderId).put("p_reason", reason).put("p_app_version", appVersion)
         if (photoPath != null) args.put("p_photo_path", photoPath)
         return sb.rpc("driver_mark_failed", args.putFix(fix)) as? JSONObject
+    }
+
+    /** The whole route in one call: the ids get 1..N in this order, the driver's other En Route orders lose their number. */
+    suspend fun setRoute(orderIds: List<String>): JSONObject? {
+        val arr = org.json.JSONArray()
+        orderIds.forEach { arr.put(it) }
+        return sb.rpc("driver_set_route", JSONObject().put("p_order_ids", arr).put("p_app_version", appVersion)) as? JSONObject
     }
 
     suspend fun undoDelivered(orderId: String): JSONObject? =

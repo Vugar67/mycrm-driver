@@ -2,6 +2,9 @@
 
 package center.mycrm.driver.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,21 +16,29 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -37,11 +48,25 @@ import center.mycrm.driver.data.Order
 
 // ---- Deliveries -------------------------------------------------------------------------------
 
+/** Callbacks of the driver's own delivery sequence (v1.4). */
+class RouteActions(
+    val onStartSequence: () -> Unit,
+    val onTapSequence: (String) -> Unit,
+    val onFinishSequence: () -> Unit,
+    val onCancel: () -> Unit,
+    val onStartAdjust: () -> Unit,
+    val onFinishAdjust: () -> Unit,
+    val onMove: (String, Int) -> Unit,
+    val onAdd: (String) -> Unit,
+    val onDismissWarnings: () -> Unit
+)
+
 @Composable
 fun DeliveriesTab(
     state: UiState,
     onOpen: (Order) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    route: RouteActions
 ) {
     if (state.loading && state.orders.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -66,36 +91,218 @@ fun DeliveriesTab(
         return
     }
     val totalCash = state.orders.sumOf { it.cashToCollect }
-    LazyColumn(
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxSize()
-    ) {
-        item {
-            Text(
-                "${state.orders.size} to deliver · cash on route " + Rules.fmtAed(totalCash),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
+    val context = LocalContext.current
+    val mode = state.routeMode
+    val routeOn = state.routeAvailable && state.orders.size >= 2
+    // position 1..N among the placed orders (the server number may have gaps after deliveries)
+    val position: Map<String, Int> = state.routedOrders.withIndex().associate { it.value.id to it.index + 1 }
+    val nextId = state.nextOrderId
+    val urgent = state.urgentNotFirst
+
+    Column(Modifier.fillMaxSize()) {
+        if (routeOn) {
+            when (mode) {
+                RouteMode.SEQUENCE -> RouteBar(
+                    text = if (state.sequenceIds.isEmpty()) "Tap the orders in the order you will deliver them"
+                           else "${state.sequenceIds.size} of ${state.orders.size} numbered — tap again to remove",
+                    primary = "Done" to route.onFinishSequence,
+                    primaryEnabled = state.sequenceIds.isNotEmpty(),
+                    secondary = "Cancel" to route.onCancel
+                )
+                RouteMode.ADJUST -> RouteBar(
+                    text = if (state.routeSaving) "Saving…" else "▲ ▼ move one place · Add puts a new order last",
+                    primary = "Done" to route.onFinishAdjust,
+                    primaryEnabled = true,
+                    secondary = null
+                )
+                RouteMode.NONE -> {}
+            }
         }
-        items(state.orders, key = { it.id }) { o ->
-            OrderCard(o, itemCount = state.items[o.id]?.size ?: 0, onClick = { onOpen(o) })
+        LazyColumn(
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "${state.orders.size} to deliver · cash on route " + Rules.fmtAed(totalCash),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp).weight(1f)
+                    )
+                    if (routeOn && mode == RouteMode.NONE) {
+                        OutlinedButton(onClick = route.onStartSequence, enabled = !state.routeSaving, contentPadding = PaddingValues(horizontal = 12.dp)) {
+                            Text(if (state.hasRoute) "↻ Sequence" else "① Sequence")
+                        }
+                        if (state.hasRoute) {
+                            Spacer(Modifier.width(6.dp))
+                            OutlinedButton(onClick = route.onStartAdjust, enabled = !state.routeSaving, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("▲▼") }
+                        }
+                    }
+                }
+            }
+            if (urgent != null && mode != RouteMode.SEQUENCE) {
+                item {
+                    Text(
+                        "⚠ URGENT $urgent is not first in your route",
+                        color = Palette.Red, fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+            }
+            items(state.orders, key = { it.id }) { o ->
+                val itemCount = state.items[o.id]?.size ?: 0
+                when (mode) {
+                    RouteMode.SEQUENCE -> {
+                        val n = state.sequenceIds.indexOf(o.id).takeIf { it >= 0 }?.plus(1)
+                        OrderCard(
+                            o, itemCount = itemCount, onClick = { route.onTapSequence(o.id) },
+                            leading = { SeqBadge(n, big = true) },
+                            highlight = n != null
+                        )
+                    }
+                    RouteMode.ADJUST -> {
+                        val n = position[o.id]
+                        OrderCard(
+                            o, itemCount = itemCount, onClick = { onOpen(o) },
+                            leading = { if (n != null) SeqBadge(n) else NewChip() },
+                            trailing = {
+                                if (n != null) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        ArrowButton("▲", enabled = n > 1) { route.onMove(o.id, -1) }
+                                        Spacer(Modifier.height(6.dp))
+                                        ArrowButton("▼", enabled = n < position.size) { route.onMove(o.id, 1) }
+                                    }
+                                } else {
+                                    Button(onClick = { route.onAdd(o.id) }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("+ Add") }
+                                }
+                            }
+                        )
+                    }
+                    RouteMode.NONE -> {
+                        val n = position[o.id]
+                        val isNext = o.id == nextId
+                        val leadingSlot: (@Composable () -> Unit)? = when {
+                            n != null -> { { SeqBadge(n) } }
+                            state.hasRoute -> { { NewChip() } }
+                            else -> null
+                        }
+                        val footerSlot: (@Composable () -> Unit)? = if (!isNext) null else {
+                            {
+                                val nav = o.navigateLink
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Chip("NEXT", Palette.Green, Color.White)
+                                    Spacer(Modifier.weight(1f))
+                                    Button(
+                                        onClick = { nav?.let { openLink(context, it) } },
+                                        enabled = nav != null,
+                                        colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White),
+                                        contentPadding = PaddingValues(horizontal = 14.dp)
+                                    ) { Text("🧭  Navigate") }
+                                }
+                            }
+                        }
+                        OrderCard(
+                            o, itemCount = itemCount, onClick = { onOpen(o) },
+                            leading = leadingSlot,
+                            highlight = isNext,
+                            footer = footerSlot
+                        )
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(24.dp)) }
         }
-        item { Spacer(Modifier.height(24.dp)) }
+    }
+
+    val warnings = state.routeWarnings
+    if (warnings != null) {
+        AlertDialog(
+            onDismissRequest = route.onDismissWarnings,
+            title = { Text("Check the route") },
+            text = {
+                Column {
+                    Text("The route is saved. A few things to look at:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    warnings.forEach { w -> Text("• $w", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(vertical = 3.dp)) }
+                }
+            },
+            confirmButton = { TextButton(onClick = route.onDismissWarnings) { Text("OK") } }
+        )
     }
 }
 
 @Composable
-fun OrderCard(order: Order, itemCount: Int, onClick: () -> Unit) {
+private fun RouteBar(text: String, primary: Pair<String, () -> Unit>, primaryEnabled: Boolean, secondary: Pair<String, () -> Unit>?) {
+    Surface(color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.weight(1f)
+            )
+            if (secondary != null) {
+                TextButton(onClick = secondary.second) { Text(secondary.first) }
+                Spacer(Modifier.width(4.dp))
+            }
+            Button(
+                onClick = primary.second, enabled = primaryEnabled,
+                colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White)
+            ) { Text(primary.first, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+/** The stop number: a green circle; in Sequence mode an empty ring until the card is tapped. */
+@Composable
+private fun SeqBadge(n: Int?, big: Boolean = false) {
+    val size = if (big) 40.dp else 32.dp
+    if (n == null) {
+        Box(Modifier.size(size).border(2.dp, MaterialTheme.colorScheme.outline, CircleShape))
+    } else {
+        Box(Modifier.size(size).background(Palette.Green, CircleShape), contentAlignment = Alignment.Center) {
+            Text(n.toString(), color = Color.White, fontWeight = FontWeight.Black, fontSize = if (big) 18.sp else 15.sp)
+        }
+    }
+}
+
+@Composable
+private fun NewChip() {
+    Chip("NEW", Palette.Yellow, Color.Black)
+}
+
+@Composable
+private fun ArrowButton(glyph: String, enabled: Boolean, onClick: () -> Unit) {
+    OutlinedButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(48.dp)) {
+        Text(glyph, fontSize = 18.sp)
+    }
+}
+
+@Composable
+fun OrderCard(
+    order: Order,
+    itemCount: Int,
+    onClick: () -> Unit,
+    leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    highlight: Boolean = false,
+    footer: (@Composable () -> Unit)? = null
+) {
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        border = if (highlight) BorderStroke(2.dp, Palette.Green) else null,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (leading != null) {
+                leading()
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PriorityDot(order.priority)
                 Spacer(Modifier.width(8.dp))
@@ -133,6 +340,15 @@ fun OrderCard(order: Order, itemCount: Int, onClick: () -> Unit) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+            if (footer != null) {
+                Spacer(Modifier.height(10.dp))
+                footer()
+            }
+            }
+            if (trailing != null) {
+                Spacer(Modifier.width(10.dp))
+                trailing()
             }
         }
     }

@@ -375,4 +375,69 @@ class RulesTest {
         assertEquals(900.0, Rules.cashTaken(900.0, 880.0), 0.0001)
         assertEquals(880.0, Rules.cashTaken(null, 880.0), 0.0001)
     }
+
+    // ---- the driver's own delivery sequence (v1.4) ----
+
+    private data class R(val num: String, val seq: Int?, val p: Int = 3, val d: String? = null, val f: String? = null, val t: String? = null)
+    private fun warnings(l: List<R>) = Rules.routeWarnings(l, { it.p }, { it.num }, { it.d }, { it.f }, { it.t })
+
+    @Test
+    fun applyRoutePlacedFirstThenTheRestInTheirOrder() {
+        val l = listOf(R("A", null), R("B", 2), R("C", null), R("D", 1), R("E", 2))
+        assertEquals(listOf("D", "B", "E", "A", "C"), Rules.applyRoute(l) { it.seq }.map { it.num })
+        assertEquals(listOf("A", "C"), Rules.applyRoute(listOf(R("A", null), R("C", null))) { it.seq }.map { it.num })
+        assertTrue(Rules.applyRoute(emptyList<R>()) { it.seq }.isEmpty())
+    }
+
+    @Test
+    fun sequenceTapTogglesAndShifts() {
+        var ids = emptyList<String>()
+        ids = Rules.toggleInSequence(ids, "a"); ids = Rules.toggleInSequence(ids, "b"); ids = Rules.toggleInSequence(ids, "c")
+        assertEquals(listOf("a", "b", "c"), ids)
+        ids = Rules.toggleInSequence(ids, "a")           // mistake → a loses its number, b and c move up
+        assertEquals(listOf("b", "c"), ids)
+        ids = Rules.toggleInSequence(ids, "a")
+        assertEquals(listOf("b", "c", "a"), ids)
+    }
+
+    @Test
+    fun arrowsMoveOnePositionAndStopAtTheEdges() {
+        val ids = listOf("a", "b", "c")
+        assertEquals(listOf("b", "a", "c"), Rules.moveInRoute(ids, "b", -1))
+        assertEquals(listOf("a", "c", "b"), Rules.moveInRoute(ids, "b", 1))
+        assertEquals(ids, Rules.moveInRoute(ids, "a", -1))
+        assertEquals(ids, Rules.moveInRoute(ids, "c", 1))
+        assertEquals(ids, Rules.moveInRoute(ids, "zzz", 1))
+        assertEquals(listOf("a", "b", "c", "d"), Rules.addToRoute(ids, "d"))
+        assertEquals(ids, Rules.addToRoute(ids, "b"))
+    }
+
+    @Test
+    fun urgentNotFirstOnlyWhenANormalOrderIsBeforeIt() {
+        assertNull(Rules.urgentNotFirst(listOf(R("U", 1, p = 1), R("N", 2)), { it.p }, { it.num }))
+        assertNull(Rules.urgentNotFirst(listOf(R("U1", 1, p = 1), R("U2", 2, p = 1), R("N", 3)), { it.p }, { it.num }))
+        assertEquals("U", Rules.urgentNotFirst(listOf(R("N", 1), R("U", 2, p = 1)), { it.p }, { it.num }))
+        assertNull(Rules.urgentNotFirst(emptyList<R>(), { it.p }, { it.num }))
+    }
+
+    @Test
+    fun routeWarningsUrgentAndWindows() {
+        // urgent after a normal one
+        assertEquals(listOf("URGENT U is #2 — deliver urgent orders first?"), warnings(listOf(R("N", 1), R("U", 2, p = 1))))
+        // window broken: 14–16 placed before 10–12 on the same day
+        val w = warnings(listOf(R("A", 1, d = "2026-10-21", f = "14:00:00", t = "16:00:00"), R("B", 2, d = "2026-10-21", f = "10:00", t = "12:00")))
+        assertEquals(1, w.size)
+        assertTrue(w[0], w[0].startsWith("A (") && w[0].contains("14:00–16:00) is before B (") && w[0].endsWith("10:00–12:00)"))
+        // later date before an earlier date
+        assertEquals(1, warnings(listOf(R("A", 1, d = "2026-10-22"), R("B", 2, d = "2026-10-21", f = "10:00", t = "12:00"))).size)
+        // fine: earlier first; overlapping windows; missing dates / windows
+        assertTrue(warnings(listOf(R("B", 1, d = "2026-10-21", f = "10:00", t = "12:00"), R("A", 2, d = "2026-10-21", f = "14:00", t = "16:00"))).isEmpty())
+        assertTrue(warnings(listOf(R("A", 1, d = "2026-10-21", f = "11:00", t = "13:00"), R("B", 2, d = "2026-10-21", f = "10:00", t = "12:00"))).isEmpty())
+        assertTrue(warnings(listOf(R("A", 1, d = "2026-10-21", f = "14:00", t = "16:00"), R("B", 2, d = null, f = "10:00", t = "12:00"))).isEmpty())
+        assertTrue(warnings(listOf(R("A", 1, d = "2026-10-21", f = null, t = "16:00"), R("B", 2, d = "2026-10-21", f = "10:00", t = "12:00"))).isEmpty())
+        assertTrue(warnings(listOf(R("A", 1, d = "2026-10-21", f = "14:00", t = "16:00"), R("B", 2, d = "2026-10-21", f = "10:00", t = null))).isEmpty())
+        // at most 4 lines
+        val many = (1..6).map { R("O$it", it, d = "2026-10-21", f = "1${7 - it}:00", t = "1${7 - it}:30") }   // windows go backwards
+        assertEquals(4, warnings(many).size)
+    }
 }

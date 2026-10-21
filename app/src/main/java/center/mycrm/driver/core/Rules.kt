@@ -433,6 +433,90 @@ object Rules {
 
     /** Cash the driver has from delivered orders: the amount he entered, or the estimate for orders closed without one. */
     fun cashTaken(received: Double?, estimate: Double): Double = received ?: estimate
+
+    // ---- The driver's own delivery sequence (v1.4) ----------------------------------------------
+
+    /**
+     * Orders placed in the route first (by route_seq, ties by the list order), then the unplaced ones in the order
+     * they came (the caller has already sorted them priority → date → window → number).
+     */
+    fun <T> applyRoute(list: List<T>, routeSeq: (T) -> Int?): List<T> {
+        val placed = list.withIndex().filter { routeSeq(it.value) != null }
+            .sortedWith(compareBy<IndexedValue<T>> { routeSeq(it.value) }.thenBy { it.index })
+            .map { it.value }
+        val rest = list.filter { routeSeq(it) == null }
+        return placed + rest
+    }
+
+    /** Sequence mode tap: a numbered order loses its number (the ones after it move up), an unnumbered one goes last. */
+    fun toggleInSequence(ids: List<String>, id: String): List<String> =
+        if (id in ids) ids.filterNot { it == id } else ids + id
+
+    /** ▲ (delta −1) / ▼ (+1): the id moves one position; nothing changes at the edges or for an unknown id. */
+    fun moveInRoute(ids: List<String>, id: String, delta: Int): List<String> {
+        val i = ids.indexOf(id)
+        if (i < 0) return ids
+        val j = i + delta
+        if (j < 0 || j >= ids.size) return ids
+        val out = ids.toMutableList()
+        out.removeAt(i)
+        out.add(j, id)
+        return out
+    }
+
+    /** Appends an order to the end of the route (▲▼ mode: "Add to route" on a NEW order). */
+    fun addToRoute(ids: List<String>, id: String): List<String> = if (id in ids) ids else ids + id
+
+    /** Urgent orders are not forced first — the app only says so. First urgent order that has a non-urgent one before it. */
+    fun <T> urgentNotFirst(routed: List<T>, priority: (T) -> Int, orderNum: (T) -> String): String? {
+        var seenNormal = false
+        for (o in routed) {
+            if (priority(o) == 1) { if (seenNormal) return orderNum(o) } else seenNormal = true
+        }
+        return null
+    }
+
+    /**
+     * Warnings shown once when the driver taps Done: urgent orders placed after normal ones, and delivery windows
+     * that the sequence breaks (an order placed BEFORE another whose window is earlier: later date, or the same date
+     * and its window starts after the other's window ends). At most [max] lines.
+     */
+    fun <T> routeWarnings(
+        routed: List<T>,
+        priority: (T) -> Int,
+        orderNum: (T) -> String,
+        schedDate: (T) -> String?,
+        schedFrom: (T) -> String?,
+        schedTo: (T) -> String?,
+        max: Int = 4
+    ): List<String> {
+        val out = ArrayList<String>()
+        val urgentLate = routed.withIndex().filter { priority(it.value) == 1 && routed.take(it.index).any { p -> priority(p) != 1 } }
+        for (u in urgentLate) {
+            out.add("URGENT ${orderNum(u.value)} is #${u.index + 1} — deliver urgent orders first?")
+            if (out.size >= max) return out
+        }
+        val d = { o: T -> schedDate(o)?.trim()?.takeIf { it.length >= 10 }?.substring(0, 10) }
+        val f = { o: T -> schedFrom(o)?.trim()?.takeIf { it.isNotEmpty() }?.let(::trimSeconds) }
+        val t = { o: T -> schedTo(o)?.trim()?.takeIf { it.isNotEmpty() }?.let(::trimSeconds) }
+        for (i in routed.indices) for (j in i + 1 until routed.size) {
+            val a = routed[i]; val b = routed[j]
+            val da = d(a); val db = d(b)
+            if (da == null || db == null) continue
+            val broken = when {
+                da > db -> true
+                da < db -> false
+                else -> { val fa = f(a); val tb = t(b); fa != null && tb != null && fa > tb }
+            }
+            if (broken) {
+                val wa = fmtSchedule(schedDate(a), schedFrom(a), schedTo(a))
+                val wb = fmtSchedule(schedDate(b), schedFrom(b), schedTo(b))
+                out.add("${orderNum(a)} ($wa) is before ${orderNum(b)} ($wb)")
+                if (out.size >= max) return out
+            }
+        }
+        return out
+    }
 }
 
 /** One WhatsApp template from driver_messages (sellerName null = for every seller). */

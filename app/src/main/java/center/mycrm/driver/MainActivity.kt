@@ -48,6 +48,7 @@ import center.mycrm.driver.ui.DoneTab
 import center.mycrm.driver.ui.DriverTheme
 import center.mycrm.driver.ui.LoginScreen
 import center.mycrm.driver.ui.OrderScreen
+import center.mycrm.driver.ui.RouteActions
 import center.mycrm.driver.ui.Screen
 import center.mycrm.driver.ui.SettingsTab
 import center.mycrm.driver.ui.StatusLine
@@ -248,7 +249,22 @@ fun App(vm: AppViewModel) {
                             )
                         } else {
                             when (state.tab) {
-                                Tab.Deliveries -> DeliveriesTab(state, onOpen = { vm.openOrder(it.id) }, onRefresh = vm::refreshNow)
+                                Tab.Deliveries -> DeliveriesTab(
+                                    state,
+                                    onOpen = { vm.openOrder(it.id) },
+                                    onRefresh = vm::refreshNow,
+                                    route = RouteActions(
+                                        onStartSequence = vm::startSequence,
+                                        onTapSequence = vm::tapSequence,
+                                        onFinishSequence = vm::finishSequence,
+                                        onCancel = vm::cancelRouteMode,
+                                        onStartAdjust = vm::startAdjust,
+                                        onFinishAdjust = vm::finishAdjust,
+                                        onMove = vm::moveInRoute,
+                                        onAdd = vm::addToRoute,
+                                        onDismissWarnings = vm::dismissRouteWarnings
+                                    )
+                                )
                                 Tab.Done -> DoneTab(state, onUndo = vm::undoDelivered, nowMs = nowMs)
                                 Tab.Settings -> SettingsTab(
                                     state = state,

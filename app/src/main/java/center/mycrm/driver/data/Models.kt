@@ -51,7 +51,9 @@ data class Order(
     val itemsSubtotal: Double? = null,
     /** v1.3: due frozen when the order was closed / cash actually taken (Cash on delivery, add_driver_cash.sql). */
     val cashDue: Double? = null,
-    val cashReceived: Double? = null
+    val cashReceived: Double? = null,
+    /** v1.4: position in the driver's own delivery sequence (1 = next); null = not placed (add_driver_route.sql). */
+    val routeSeq: Int? = null
 ) {
     val cashToCollect: Double
         get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus, itemsSubtotal)
@@ -123,7 +125,8 @@ object Parse {
         driver = o.str("driver"),
         contentType = o.str("content_type"),
         cashDue = o.num("cash_due"),
-        cashReceived = o.num("cash_received")
+        cashReceived = o.num("cash_received"),
+        routeSeq = o.num("route_seq")?.toInt()
     )
 
     fun orders(arr: JSONArray): List<Order> {
