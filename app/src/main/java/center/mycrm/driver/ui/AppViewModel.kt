@@ -44,6 +44,9 @@ enum class PodKind { DELIVERED, FAILED }
 
 /** v1.4: NONE = normal list · SEQUENCE = tap the orders in delivery order · ADJUST = ▲▼ / Add to route. */
 enum class RouteMode { NONE, SEQUENCE, ADJUST }
+
+/** v1.6: what the server said about a scanned bag — shown in a dialog (the picked-up case is only a toast). */
+data class ScanMessage(val text: String, val ok: Boolean)
 enum class PodStage { PROCESSING, READY, UPLOADING, ERROR }
 
 /** Photo at the door (v1.1): taken → stamped → confirmed → uploaded → order closed. */
@@ -95,6 +98,10 @@ data class UiState(
     val routeSaving: Boolean = false,
     /** Shown once after Done when the sequence looks odd (urgent not first, windows broken). */
     val routeWarnings: List<String>? = null,
+    /** v1.6: false until add_driver_pickup.sql is run → no Scan button. */
+    val pickupAvailable: Boolean = true,
+    val scanBusy: Boolean = false,
+    val scanMessage: ScanMessage? = null,
     /** v1.5: trips (staff pick-up / drop-off, tasks) — planned up to today and done today. */
     val trips: List<center.mycrm.driver.data.Trip> = emptyList()
 ) {
@@ -262,6 +269,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     items = snap.items,
                     doneToday = snap.doneToday,
                     routeAvailable = snap.routeAvailable,
+                    pickupAvailable = snap.pickupAvailable,
                     trips = snap.trips,
                     lastUpdateMs = System.currentTimeMillis(),
                     offline = false,
@@ -634,6 +642,62 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             refresh()
         }
+    }
+
+    // ---- Bag label scan (v1.6) ---------------------------------------------------------------
+
+    /**
+     * The scanner read [code]. The server decides: his En Route order → picked up (toast, list refreshed);
+     * already picked up → the order opens (Delivered is there); anything else → a dialog, nothing written.
+     */
+    fun onScanned(code: String?) {
+        val raw = code?.trim().orEmpty()
+        if (raw.isEmpty()) return
+        if (_state.value.scanBusy) return
+        val digits = Rules.scanDigits(raw)
+        if (digits == null) {
+            _state.update { it.copy(scanMessage = ScanMessage(Rules.scanMessage("not_found", null, null, null, null, false) + " — this is not a MyCRM bag label", false)) }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(scanBusy = true) }
+            try {
+                val r = repo.scanOrder(digits)
+                val result = r?.optString("result").orEmpty()
+                val num = r?.optString("order_num")?.takeIf { it.isNotBlank() } ?: "ORD-$digits"
+                val driver = r?.optString("driver")?.takeIf { it.isNotBlank() }
+                val status = r?.optString("status")?.takeIf { it.isNotBlank() }
+                val whenIso = r?.optString(if (result == "delivered") "delivered_at" else "picked_up_at")?.takeIf { it.isNotBlank() }
+                val mine = r?.optBoolean("mine", true) ?: true
+                val text = Rules.scanMessage(result, num, driver, status, whenIso?.let { Rules.fmtTimeDubai(it) }, mine)
+                when (result) {
+                    "picked_up" -> {
+                        toast(text)
+                        refresh()
+                    }
+                    "already_picked" -> {
+                        val id = r?.optString("order_id")?.takeIf { it.isNotBlank() }
+                        toast(text)
+                        refresh()
+                        if (id != null && _state.value.orders.any { it.id == id }) openOrder(id)
+                    }
+                    else -> _state.update { it.copy(scanMessage = ScanMessage(text, false)) }
+                }
+            } catch (e: AuthRequiredException) {
+                signOut()
+                _state.update { it.copy(loginError = "Session expired — please sign in again") }
+            } catch (e: SupabaseException) {
+                _state.update { it.copy(scanMessage = ScanMessage(e.message ?: "Server refused the scan", false)) }
+            } catch (e: Exception) {
+                _state.update { it.copy(scanMessage = ScanMessage("No connection — the scan was NOT saved. Try again.", false)) }
+            } finally {
+                _state.update { it.copy(scanBusy = false) }
+            }
+        }
+    }
+
+    fun dismissScanMessage() {
+        _state.update { it.copy(scanMessage = null) }
     }
 
     // ---- Self-update -------------------------------------------------------------------------

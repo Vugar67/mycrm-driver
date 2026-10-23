@@ -2,7 +2,10 @@
 
 package center.mycrm.driver.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.BorderStroke
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -66,15 +69,62 @@ class RouteActions(
     val onDismissWarnings: () -> Unit
 )
 
+/** v1.6: the bag label scanner (QR = order number digits). */
+class ScanActions(
+    val available: Boolean,
+    val busy: Boolean,
+    val message: ScanMessage?,
+    val onScanned: (String?) -> Unit,
+    val onDismiss: () -> Unit
+)
+
+/** Opens the ZXing scanner (portrait allowed, QR only, beep); the library asks for the CAMERA permission itself. */
+@Composable
+fun rememberBagScanner(onResult: (String?) -> Unit): () -> Unit {
+    val launcher = rememberLauncherForActivityResult(ScanContract()) { result -> onResult(result.contents) }
+    return {
+        launcher.launch(
+            ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("Point the camera at the QR on the bag")
+                .setBeepEnabled(true)
+                .setOrientationLocked(false)
+        )
+    }
+}
+
+@Composable
+private fun ScanButton(scan: ScanActions, launch: () -> Unit, modifier: Modifier = Modifier) {
+    Button(
+        onClick = launch,
+        enabled = !scan.busy,
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+        contentPadding = PaddingValues(horizontal = 14.dp),
+        modifier = modifier
+    ) { Text(if (scan.busy) "…" else "📷 Scan", fontWeight = FontWeight.Bold) }
+}
+
 @Composable
 fun DeliveriesTab(
     state: UiState,
     onOpen: (Order) -> Unit,
     onRefresh: () -> Unit,
     route: RouteActions,
-    onTripDone: (Trip) -> Unit = {}
+    onTripDone: (Trip) -> Unit = {},
+    scan: ScanActions = ScanActions(false, false, null, {}, {})
 ) {
     val trips = state.tripsPlanned
+    val launchScan = rememberBagScanner(scan.onScanned)
+    val scanMsg = scan.message
+    if (scanMsg != null) {
+        AlertDialog(
+            onDismissRequest = scan.onDismiss,
+            title = { Text(if (scanMsg.ok) "Scanned" else "Not this bag") },
+            text = { Text(scanMsg.text, style = MaterialTheme.typography.bodyLarge) },
+            confirmButton = { Button(onClick = { scan.onDismiss(); launchScan() }) { Text("📷 Scan next") } },
+            dismissButton = { TextButton(onClick = scan.onDismiss) { Text("OK") } }
+        )
+    }
     if (state.loading && state.orders.isEmpty() && state.trips.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
@@ -93,7 +143,10 @@ fun DeliveriesTab(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(20.dp))
-            OutlinedButton(onClick = onRefresh) { Text("Refresh") }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onRefresh) { Text("Refresh") }
+                if (scan.available) ScanButton(scan, launchScan)
+            }
         }
         return
     }
@@ -105,6 +158,9 @@ fun DeliveriesTab(
     val position: Map<String, Int> = state.routedOrders.withIndex().associate { it.value.id to it.index + 1 }
     val nextId = state.nextOrderId
     val urgent = state.urgentNotFirst
+    val pickupText: (Order) -> String? = { o ->
+        if (!scan.available) null else if (o.pickedUpAt != null) "📦 picked up " + Rules.fmtTimeDubai(o.pickedUpAt) else "bag not scanned yet"
+    }
 
     Column(Modifier.fillMaxSize()) {
         // the bar stays while a mode is on, even if the list shrinks to one order — Done / Cancel must stay reachable
@@ -158,6 +214,20 @@ fun DeliveriesTab(
                     }
                 }
             }
+            // v1.6: scan the bag label at the warehouse — "picked up" per order; bags still to collect are marked
+            if (scan.available && mode == RouteMode.NONE && state.orders.isNotEmpty()) item {
+                val left = state.orders.count { it.pickedUpAt == null }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        if (left == 0) "📦 All bags picked up" else "📦 $left bag" + (if (left == 1) "" else "s") + " not scanned yet",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (left == 0) Palette.Green else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp).weight(1f)
+                    )
+                    ScanButton(scan, launchScan)
+                }
+            }
             if (urgent != null && mode != RouteMode.SEQUENCE) {
                 item {
                     Text(
@@ -174,7 +244,7 @@ fun DeliveriesTab(
                     RouteMode.SEQUENCE -> {
                         val n = state.sequenceIds.indexOf(o.id).takeIf { it >= 0 }?.plus(1)
                         OrderCard(
-                            o, itemCount = itemCount, onClick = { route.onTapSequence(o.id) },
+                            o, itemCount = itemCount, pickup = pickupText(o), onClick = { route.onTapSequence(o.id) },
                             leading = { SeqBadge(n, big = true) },
                             highlight = n != null
                         )
@@ -182,7 +252,7 @@ fun DeliveriesTab(
                     RouteMode.ADJUST -> {
                         val n = position[o.id]
                         OrderCard(
-                            o, itemCount = itemCount, onClick = { onOpen(o) },
+                            o, itemCount = itemCount, pickup = pickupText(o), onClick = { onOpen(o) },
                             leading = { if (n != null) SeqBadge(n) else NewChip() },
                             trailing = {
                                 if (n != null) {
@@ -221,7 +291,7 @@ fun DeliveriesTab(
                             }
                         }
                         OrderCard(
-                            o, itemCount = itemCount, onClick = { onOpen(o) },
+                            o, itemCount = itemCount, pickup = pickupText(o), onClick = { onOpen(o) },
                             leading = leadingSlot,
                             highlight = isNext,
                             footer = footerSlot
@@ -367,7 +437,9 @@ fun OrderCard(
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
     highlight: Boolean = false,
-    footer: (@Composable () -> Unit)? = null
+    footer: (@Composable () -> Unit)? = null,
+    /** v1.6: "📦 picked up 10:21" / "not scanned yet"; null = the pickup feature is off. */
+    pickup: String? = null
 ) {
     Card(
         onClick = onClick,
@@ -389,6 +461,10 @@ fun OrderCard(
                 Text(order.orderNum, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 PaymentChip(order)
+            }
+            if (pickup != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(pickup, style = MaterialTheme.typography.bodySmall, color = if (order.pickedUpAt != null) Palette.Green else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(6.dp))
             Text(

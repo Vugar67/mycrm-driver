@@ -14,7 +14,9 @@ data class Snapshot(
     /** false = orders.route_seq is not in the database yet (add_driver_route.sql not run) → the route UI is hidden. */
     val routeAvailable: Boolean = true,
     /** v1.5: planned trips up to today + trips done today (empty when add_trips.sql is not run). */
-    val trips: List<Trip> = emptyList()
+    val trips: List<Trip> = emptyList(),
+    /** v1.6: false = orders.picked_up_at is not in the database yet (add_driver_pickup.sql not run) → no Scan button. */
+    val pickupAvailable: Boolean = true
 )
 
 /** Thrown when the account exists but is not a usable driver account. */
@@ -34,23 +36,31 @@ class Repository(private val sb: SupabaseClient) {
         "cash_due", "cash_received"
     )
 
-    /** v1.4: the route column is optional — without add_driver_route.sql the select is retried without it. */
-    private val routeColumn = "route_seq"
+    /**
+     * Optional column groups — each comes with its own migration. When the database does not have one yet
+     * ("column orders.route_seq does not exist", 400), the select is retried without that group and the matching
+     * part of the UI stays hidden (v1.4 route; v1.6 pickup scan).
+     */
+    private val routeColumns = listOf("route_seq")
+    private val pickupColumns = listOf("picked_up_at", "picked_up_by")
     @Volatile private var routeMissing = false
+    @Volatile private var pickupMissing = false
 
-    private fun columns(withRoute: Boolean): String =
-        (if (withRoute) orderColumns + routeColumn else orderColumns).joinToString(",")
+    private fun columns(): String =
+        (orderColumns + (if (routeMissing) emptyList() else routeColumns) + (if (pickupMissing) emptyList() else pickupColumns)).joinToString(",")
 
     private suspend fun selectOrders(params: Map<String, String>): JSONArray {
-        if (!routeMissing) {
+        for (attempt in 0 until 3) {
             try {
-                return sb.select("orders", params + ("select" to columns(true)))
+                return sb.select("orders", params + ("select" to columns()))
             } catch (e: SupabaseException) {
-                // "column orders.route_seq does not exist" → migration not run; carry on without the route
-                if (e.status == 400 && e.message?.contains(routeColumn) == true) routeMissing = true else throw e
+                val m = e.message ?: ""
+                if (e.status == 400 && !routeMissing && routeColumns.any { m.contains(it) }) routeMissing = true
+                else if (e.status == 400 && !pickupMissing && pickupColumns.any { m.contains(it) }) pickupMissing = true
+                else throw e
             }
         }
-        return sb.select("orders", params + ("select" to columns(false)))
+        return sb.select("orders", params + ("select" to columns()))
     }
 
     /**
@@ -145,7 +155,7 @@ class Repository(private val sb: SupabaseClient) {
                 "limit" to "200"
             )
         )
-        return Snapshot(orders, items, Parse.orders(doneRaw), routeAvailable = !routeMissing, trips = loadTrips())
+        return Snapshot(orders, items, Parse.orders(doneRaw), routeAvailable = !routeMissing, trips = loadTrips(), pickupAvailable = !pickupMissing)
     }
 
     /** v1.5: without add_trips.sql the function is missing → no trips (asked again every 5 minutes). */
@@ -231,6 +241,10 @@ class Repository(private val sb: SupabaseClient) {
         orderIds.forEach { arr.put(it) }
         return sb.rpc("driver_set_route", JSONObject().put("p_order_ids", arr).put("p_app_version", appVersion)) as? JSONObject
     }
+
+    /** v1.6: the bag label's QR (order number digits) → the server decides: picked up / already / not yours / … */
+    suspend fun scanOrder(code: String): JSONObject? =
+        sb.rpc("driver_scan_order", JSONObject().put("p_code", code).put("p_app_version", appVersion)) as? JSONObject
 
     suspend fun undoDelivered(orderId: String): JSONObject? =
         sb.rpc("driver_undo_delivered", JSONObject().put("p_order_id", orderId).put("p_app_version", appVersion)) as? JSONObject

@@ -1,13 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- v1.1: GPS of the delivery photo (only at the moment of the photo, never in the background) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- The photo is taken by the phone's camera app (ACTION_IMAGE_CAPTURE): no CAMERA permission is declared on purpose —
-         declaring it would force a runtime CAMERA permission before the intent may be used. -->
+    <!-- v1.6: the QR scanner (ZXing) needs CAMERA. Side effect: Android now requires CAMERA to be granted before the
+         photo intent (ACTION_IMAGE_CAPTURE) too — the app asks for it together with location before the first photo. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <queries>
@@ -34,6 +36,12 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- v1.6: ZXing scanner screen — portrait allowed (the library locks landscape by default) -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="fullSensor"
+            tools:replace="screenOrientation" />
 
         <activity
             android:name=".MainActivity"

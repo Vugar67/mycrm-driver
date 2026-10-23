@@ -49,6 +49,7 @@ import center.mycrm.driver.ui.DriverTheme
 import center.mycrm.driver.ui.LoginScreen
 import center.mycrm.driver.ui.OrderScreen
 import center.mycrm.driver.ui.RouteActions
+import center.mycrm.driver.ui.ScanActions
 import center.mycrm.driver.ui.Screen
 import center.mycrm.driver.ui.SettingsTab
 import center.mycrm.driver.ui.StatusLine
@@ -240,6 +241,7 @@ fun App(vm: AppViewModel) {
                                 messages = state.messages,
                                 driverName = state.identity?.driverName ?: "",
                                 cashChecking = state.cashChecking,
+                                pickupAvailable = state.pickupAvailable,
                                 onBack = vm::closeOrder,
                                 onCheckCash = vm::checkCash,
                                 onPrefetchFix = vm::prefetchFix,
@@ -266,7 +268,14 @@ fun App(vm: AppViewModel) {
                                         onAdd = vm::addToRoute,
                                         onDismissWarnings = vm::dismissRouteWarnings
                                     ),
-                                    onTripDone = vm::tripDone
+                                    onTripDone = vm::tripDone,
+                                    scan = ScanActions(
+                                        available = state.pickupAvailable,
+                                        busy = state.scanBusy,
+                                        message = state.scanMessage,
+                                        onScanned = vm::onScanned,
+                                        onDismiss = vm::dismissScanMessage
+                                    )
                                 )
                                 Tab.Done -> DoneTab(state, onUndo = vm::undoDelivered, nowMs = nowMs, onTripUndo = vm::tripUndo)
                                 Tab.Settings -> SettingsTab(

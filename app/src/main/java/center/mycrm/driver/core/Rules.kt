@@ -560,6 +560,34 @@ object Rules {
         val d = parseInstant(doneAtIso) ?: return 0L
         return (UNDO_WINDOW_MS - (now.toEpochMilli() - d.toEpochMilli())).coerceAtLeast(0L)
     }
+
+    // ---- Bag label scan (v1.6) -----------------------------------------------------------------
+
+    /**
+     * The QR on the warehouse label holds the order number digits ("123605"). Anything else scanned (a URL with the
+     * number, "ORD-123605", spaces) is reduced to its digits; no digits or more than 8 → null (not one of ours).
+     */
+    fun scanDigits(text: String?): String? {
+        val d = text?.filter { it.isDigit() } ?: return null
+        return if (d.isEmpty() || d.length > 8) null else d
+    }
+
+    fun orderNumFromScan(text: String?): String? = scanDigits(text)?.let { "ORD-$it" }
+
+    /** One line for the driver, from the server's answer to driver_scan_order. */
+    fun scanMessage(result: String?, orderNum: String?, driver: String?, status: String?, whenText: String?, mine: Boolean): String {
+        val num = orderNum ?: "This order"
+        return when (result) {
+            "picked_up" -> "📦 $num picked up"
+            "already_picked" -> "$num was already picked up" + (if (whenText.isNullOrBlank()) "" else " at $whenText") + " — tap Delivered when it is handed over"
+            "other_driver" -> "$num is assigned to ${driver ?: "another driver"} — not yours. Leave the bag."
+            "not_dispatched" -> "$num is not dispatched yet" + (if (status.isNullOrBlank()) "" else " ($status)") + " — call the dispatcher"
+            "delivered" -> "$num was already delivered" + (if (whenText.isNullOrBlank()) "" else " at $whenText") + (if (mine || driver.isNullOrBlank()) "" else " by $driver")
+            "not_en_route" -> "$num is ${status ?: "not En Route"} — call the dispatcher"
+            "not_found" -> "No order for this code" + (if (orderNum.isNullOrBlank()) "" else " ($orderNum)")
+            else -> "Unknown answer from the server"
+        }
+    }
 }
 
 /** One WhatsApp template from driver_messages (sellerName null = for every seller). */

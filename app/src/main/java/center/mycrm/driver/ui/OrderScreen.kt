@@ -81,6 +81,7 @@ fun OrderScreen(
     messages: List<MessageTemplate>,
     driverName: String,
     cashChecking: Boolean,
+    pickupAvailable: Boolean,
     onBack: () -> Unit,
     onCheckCash: () -> Unit,
     onPrefetchFix: () -> Unit,
@@ -140,23 +141,29 @@ fun OrderScreen(
         } catch (e: ActivityNotFoundException) {
             Toast.makeText(context, "No camera app on this phone", Toast.LENGTH_LONG).show()
             if (kind == PodKind.DELIVERED) noPhotoAsk = true
+        } catch (e: SecurityException) {
+            // v1.6: the app now declares CAMERA (QR scanner) — Android requires it to be granted before the camera intent
+            Toast.makeText(context, "Allow the camera for MyCRM Driver (Settings → Apps → Permissions)", Toast.LENGTH_LONG).show()
+            if (kind == PodKind.DELIVERED) noPhotoAsk = true
         }
     }
 
     var pendingKind by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingReason by rememberSaveable { mutableStateOf<String?>(null) }
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
-        // granted or not — the photo is taken anyway; without permission the stamp says "GPS: off"
+        // location granted or not — the photo is taken anyway (without it the stamp says "GPS: off");
+        // the camera itself: launchCamera reports when CAMERA was refused
         val k = pendingKind
         pendingKind = null
         if (k != null) launchCamera(PodKind.valueOf(k), pendingReason)
     }
 
     fun startCapture(kind: PodKind, reason: String?) {
-        if (!Pod.hasLocationPermission(context)) {
+        // v1.6: CAMERA is declared for the QR scanner, so the camera intent needs it granted too (asked together with location)
+        if (!Pod.hasLocationPermission(context) || !Pod.hasCameraPermission(context)) {
             pendingKind = kind.name
             pendingReason = reason
-            locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            locationPermission.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
         } else {
             launchCamera(kind, reason)
         }
@@ -223,6 +230,9 @@ fun OrderScreen(
             InfoRow("Villa / bldg", order.villa ?: "")
             InfoRow("Apt", order.apt ?: "")
             if (order.scheduleText.isNotEmpty()) InfoRow("When", order.scheduleText, FontWeight.Bold)
+            if (pickupAvailable && isEnRoute) {
+                InfoRow("Bag", if (order.pickedUpAt != null) "📦 picked up " + Rules.fmtTimeDubai(order.pickedUpAt) else "not scanned yet", if (order.pickedUpAt != null) FontWeight.Bold else FontWeight.Normal)
+            }
             Spacer(Modifier.height(8.dp))
             val nav = order.navigateLink
             val waze = order.wazeLink

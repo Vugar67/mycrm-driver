@@ -53,7 +53,10 @@ data class Order(
     val cashDue: Double? = null,
     val cashReceived: Double? = null,
     /** v1.4: position in the driver's own delivery sequence (1 = next); null = not placed (add_driver_route.sql). */
-    val routeSeq: Int? = null
+    val routeSeq: Int? = null,
+    /** v1.6: the driver scanned the bag label (took the package from the warehouse); null = not yet. */
+    val pickedUpAt: String? = null,
+    val pickedUpBy: String? = null
 ) {
     val cashToCollect: Double
         get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus, itemsSubtotal)
@@ -145,7 +148,9 @@ object Parse {
         contentType = o.str("content_type"),
         cashDue = o.num("cash_due"),
         cashReceived = o.num("cash_received"),
-        routeSeq = o.num("route_seq")?.toInt()
+        routeSeq = o.num("route_seq")?.toInt(),
+        pickedUpAt = o.str("picked_up_at"),
+        pickedUpBy = o.str("picked_up_by")
     )
 
     fun orders(arr: JSONArray): List<Order> {

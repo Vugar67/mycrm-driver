@@ -488,4 +488,32 @@ class RulesTest {
         assertEquals(0L, Rules.tripUndoLeftMs("2026-10-21T08:00:00Z", done.plusSeconds(301)))
         assertEquals(0L, Rules.tripUndoLeftMs(null, done))
     }
+
+    // ---- bag label scan (v1.6) ----
+
+    @Test
+    fun scanDigitsFromTheLabelAndFromNoise() {
+        assertEquals("123605", Rules.scanDigits("123605"))
+        assertEquals("123605", Rules.scanDigits(" ORD-123605 "))
+        assertEquals("123605", Rules.scanDigits("https://mycrm.center/driver/o/ORD-123605"))
+        assertEquals("ORD-123605", Rules.orderNumFromScan("123605"))
+        assertNull(Rules.scanDigits(null))
+        assertNull(Rules.scanDigits(""))
+        assertNull(Rules.scanDigits("hello"))
+        assertNull(Rules.scanDigits("123456789"))     // 9 digits — not an order number
+        assertNull(Rules.orderNumFromScan("abc"))
+    }
+
+    @Test
+    fun scanMessages() {
+        assertEquals("📦 ORD-1 picked up", Rules.scanMessage("picked_up", "ORD-1", null, null, null, true))
+        assertEquals("ORD-1 was already picked up at 10:21 — tap Delivered when it is handed over", Rules.scanMessage("already_picked", "ORD-1", null, null, "10:21", true))
+        assertEquals("ORD-1 is assigned to Firoj — not yours. Leave the bag.", Rules.scanMessage("other_driver", "ORD-1", "Firoj", "En Route", null, false))
+        assertEquals("ORD-1 is not dispatched yet (Ready for Pick-up) — call the dispatcher", Rules.scanMessage("not_dispatched", "ORD-1", null, "Ready for Pick-up", null, false))
+        assertEquals("ORD-1 was already delivered at 14:20 by Kerem", Rules.scanMessage("delivered", "ORD-1", "Kerem", null, "14:20", false))
+        assertEquals("ORD-1 was already delivered at 14:20", Rules.scanMessage("delivered", "ORD-1", "Rufat", null, "14:20", true))
+        assertEquals("ORD-1 is Cancelled — call the dispatcher", Rules.scanMessage("not_en_route", "ORD-1", null, "Cancelled", null, true))
+        assertEquals("No order for this code (ORD-999999)", Rules.scanMessage("not_found", "ORD-999999", null, null, null, false))
+        assertEquals("Unknown answer from the server", Rules.scanMessage("???", "ORD-1", null, null, null, false))
+    }
 }
