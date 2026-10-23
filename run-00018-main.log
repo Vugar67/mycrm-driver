@@ -1,7 +1,7 @@
-run: 3  ref: main  sha: b4ece658ff57a638881f97cf3b1de9c6e1f65257
+run: 18  ref: main  sha: 0d8283ffe7e4385a835c499f811780dddac0968c
 status: success
-version: 0.0.3-dev code 3
-time: 2026-10-16T11:45:24Z
+version: 0.0.18-dev code 18
+time: 2026-10-23T16:30:33Z
 
 ===== errors =====
 
@@ -16,8 +16,8 @@ Daemon will be stopped at the end of the build
 > Task :app:checkDebugAarMetadata
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources FROM-CACHE
-> Task :app:mergeDebugResources FROM-CACHE
 > Task :app:packageDebugResources FROM-CACHE
+> Task :app:mergeDebugResources
 > Task :app:parseDebugLocalResources FROM-CACHE
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug FROM-CACHE
@@ -37,10 +37,10 @@ Daemon will be stopped at the end of the build
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
 > Task :app:processDebugUnitTestJavaRes
 > Task :app:testDebugUnitTest
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1792151069839.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1792772944042.json
 
-BUILD SUCCESSFUL in 40s
-24 actionable tasks: 16 executed, 8 from cache
+BUILD SUCCESSFUL in 1m 17s
+24 actionable tasks: 17 executed, 7 from cache
 
 ===== build (tail) =====
 To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
@@ -78,26 +78,26 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugJniLibFolders
 > Task :app:checkDebugDuplicateClasses
 > Task :app:mergeDebugNativeLibs
-> Task :app:mergeExtDexDebug FROM-CACHE
 > Task :app:mergeLibDexDebug FROM-CACHE
+> Task :app:mergeDebugJavaResource
 
 > Task :app:stripDebugDebugSymbols
 Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so.
 
-> Task :app:mergeDebugJavaResource
 > Task :app:mergeProjectDexDebug
 > Task :app:validateSigningDebug
 > Task :app:writeDebugAppMetadata
 > Task :app:writeDebugSigningConfigVersions
+> Task :app:mergeExtDexDebug
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1792151107711.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1792773009711.json
 
-BUILD SUCCESSFUL in 17s
-37 actionable tasks: 14 executed, 5 from cache, 18 up-to-date
+BUILD SUCCESSFUL in 25s
+37 actionable tasks: 15 executed, 4 from cache, 18 up-to-date
 
 ===== signer =====
 
 ===== test reports =====
-<testsuite name="center.mycrm.driver.core.RulesTest" tests="28" skipped="0" failures="0" errors="0" timestamp="2026-10-16T11:45:03" hostname="runnervm8k3b6" time="0.097">
+<testsuite name="center.mycrm.driver.core.RulesTest" tests="53" skipped="0" failures="0" errors="0" timestamp="2026-10-23T16:30:05" hostname="runnervm8k3b6" time="0.165">
