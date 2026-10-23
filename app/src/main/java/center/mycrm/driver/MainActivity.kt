@@ -238,6 +238,7 @@ fun App(vm: AppViewModel) {
                                 busy = state.busy,
                                 isEnRoute = state.orders.any { it.id == order.id },
                                 pod = state.pod,
+                                payPhoto = state.payPhoto,
                                 messages = state.messages,
                                 driverName = state.identity?.driverName ?: "",
                                 cashChecking = state.cashChecking,
@@ -246,8 +247,11 @@ fun App(vm: AppViewModel) {
                                 onCheckCash = vm::checkCash,
                                 onPrefetchFix = vm::prefetchFix,
                                 onPhotoTaken = { kind, file, reason -> vm.onPhotoTaken(order, kind, file, reason) },
+                                onPaymentPhotoTaken = { file -> vm.onPaymentPhotoTaken(order, file) },
+                                onSkipPayment = { reason -> vm.skipPaymentPhoto(order, reason) },
+                                onCancelPayment = vm::cancelPaymentPhoto,
                                 onConfirmPod = { cash -> vm.confirmPod(order, cash) },
-                                onCancelPod = vm::cancelPod,
+                                onCancelPod = { all -> vm.cancelPod(all) },
                                 onDeliveredNoPhoto = { reason, cash -> vm.markDeliveredNoPhoto(order, reason, cash) },
                                 onFailed = { reason -> vm.markFailed(order, reason) }
                             )

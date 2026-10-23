@@ -516,4 +516,32 @@ class RulesTest {
         assertEquals("No order for this code (ORD-999999)", Rules.scanMessage("not_found", "ORD-999999", null, null, null, false))
         assertEquals("Unknown answer from the server", Rules.scanMessage("???", "ORD-1", null, null, null, false))
     }
+
+    // ---- payment confirmation photo + place line (v1.7) ----
+
+    @Test
+    fun paymentPhotoOnlyForLinkOnDelivery() {
+        assertTrue(Rules.needsPaymentPhoto("Link on delivery"))
+        assertTrue(Rules.needsPaymentPhoto(" LINK  on Delivery "))
+        assertFalse(Rules.needsPaymentPhoto("Cash on delivery"))
+        assertFalse(Rules.needsPaymentPhoto("Paid via link"))
+        assertFalse(Rules.needsPaymentPhoto(null))
+    }
+
+    @Test
+    fun paymentObjectNameHasThePrefixAndMatchesThePolicy() {
+        val at = Instant.parse("2026-10-23T17:03:00Z").toEpochMilli()
+        val n = Rules.podObjectName("1F0E9C2A-1234-4ABC-9DEF-00112233AABB", at, 0x00ab, "pay-")
+        assertEquals("1f0e9c2a-1234-4abc-9def-00112233aabb/pay-20261023-210300-00ab.jpg", n)
+        assertTrue(Rules.POD_OBJECT_NAME.matches(n))
+        assertTrue(Rules.POD_OBJECT_NAME.matches(Rules.podObjectName("1f0e9c2a-1234-4abc-9def-00112233aabb", at, 1, "../")))   // junk stripped
+    }
+
+    @Test
+    fun placeLineEmirateAndDistrict() {
+        assertEquals("DUBAI · District One", Rules.placeLine("Dubai", "District One"))
+        assertEquals("DUBAI", Rules.placeLine("Dubai", " "))
+        assertEquals("JVC", Rules.placeLine(null, "JVC"))
+        assertEquals("", Rules.placeLine("", null))
+    }
 }

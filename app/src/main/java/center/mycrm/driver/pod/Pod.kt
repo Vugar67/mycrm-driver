@@ -163,7 +163,19 @@ object Pod {
         return loc?.let { Fix(it.latitude, it.longitude, if (it.hasAccuracy()) it.accuracy else null, it.time) }
     }
 
-    /** Storage object name: <order uuid>/<yyyyMMdd-HHmmss>-<4 hex>.jpg (the bucket policy checks this shape). */
-    fun objectName(orderId: String, takenAtMs: Long): String =
-        Rules.podObjectName(orderId, takenAtMs, (Math.random() * 0xFFFF).toInt())
+    /** Storage object name: <order uuid>/[prefix]<yyyyMMdd-HHmmss>-<4 hex>.jpg (the bucket policy checks this shape). */
+    fun objectName(orderId: String, takenAtMs: Long, prefix: String = ""): String =
+        Rules.podObjectName(orderId, takenAtMs, (Math.random() * 0xFFFF).toInt(), prefix)
+
+    /** v1.7: Link on delivery — why there is no photo of the client's payment confirmation. */
+    val PAY_SKIP_REASONS: List<String> = listOf(
+        "Client paid earlier",
+        "Client refused to show the screen",
+        "Camera not working",
+        "Other…"
+    )
+
+    /** Stamp of the payment screen photo: a title line, then the usual order / time / GPS lines. */
+    fun paymentStampLines(orderNum: String, driver: String, takenAtMs: Long, fix: Fix?): List<String> =
+        listOf("PAYMENT CONFIRMATION") + stampLines(orderNum, driver, takenAtMs, fix)
 }

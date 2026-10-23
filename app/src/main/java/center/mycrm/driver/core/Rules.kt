@@ -361,13 +361,21 @@ object Rules {
     /** Must match the bucket policy in add_driver_photos.sql. */
     val POD_OBJECT_NAME = Regex("^[0-9a-f-]{36}/[A-Za-z0-9._-]{1,80}\\.(jpg|jpeg|png)$")
 
-    /** "<order uuid lower-case>/<yyyyMMdd-HHmmss Dubai>-<4 hex>.jpg" */
-    fun podObjectName(orderId: String, takenAtMs: Long, rnd: Int): String {
+    /** "<order uuid lower-case>/[prefix]<yyyyMMdd-HHmmss Dubai>-<4 hex>.jpg" — prefix "pay-" marks the payment screen (v1.7). */
+    fun podObjectName(orderId: String, takenAtMs: Long, rnd: Int, prefix: String = ""): String {
         val t = Instant.ofEpochMilli(takenAtMs).atZone(DUBAI)
         val stamp = t.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss", Locale.ROOT))
         val hex = Integer.toHexString(rnd and 0xFFFF).padStart(4, '0')
-        return "${orderId.trim().lowercase(Locale.ROOT)}/$stamp-$hex.jpg"
+        val p = prefix.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+        return "${orderId.trim().lowercase(Locale.ROOT)}/$p$stamp-$hex.jpg"
     }
+
+    /** v1.7: Link on delivery = the client pays by link at the door → the app asks for a photo of the confirmation. */
+    fun needsPaymentPhoto(paymentStatus: String?): Boolean = paymentMode(paymentStatus) == PaymentMode.LINK
+
+    /** The emirate · district line of a card (v1.7: the district replaces the city; empty parts are dropped). */
+    fun placeLine(emirate: String?, district: String?): String =
+        listOfNotNull(emirate?.trim()?.takeIf { it.isNotEmpty() }?.uppercase(Locale.ROOT), district?.trim()?.takeIf { it.isNotEmpty() }).joinToString(" · ")
 
     /** Short, single-line quantity label: "2 pcs" / "1 pc". */
     fun pcs(qty: Double): String {

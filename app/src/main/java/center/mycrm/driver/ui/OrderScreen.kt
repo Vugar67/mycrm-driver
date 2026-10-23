@@ -78,6 +78,7 @@ fun OrderScreen(
     busy: Boolean,
     isEnRoute: Boolean,
     pod: PodState?,
+    payPhoto: PayPhotoState?,
     messages: List<MessageTemplate>,
     driverName: String,
     cashChecking: Boolean,
@@ -86,8 +87,11 @@ fun OrderScreen(
     onCheckCash: () -> Unit,
     onPrefetchFix: () -> Unit,
     onPhotoTaken: (PodKind, File, String?) -> Unit,
+    onPaymentPhotoTaken: (File) -> Unit,
+    onSkipPayment: (String) -> Unit,
+    onCancelPayment: () -> Unit,
     onConfirmPod: (Double?) -> Unit,
-    onCancelPod: () -> Unit,
+    onCancelPod: (Boolean) -> Unit,
     onDeliveredNoPhoto: (String, Double?) -> Unit,
     onFailed: (String) -> Unit
 ) {
@@ -116,15 +120,21 @@ fun OrderScreen(
     var cashAsk by rememberSaveable { mutableStateOf(false) }
     var cashTaken by rememberSaveable { mutableStateOf<Double?>(null) }
     val isCash = order.paymentMode == Rules.PaymentMode.CASH
+    // v1.7: Link on delivery — photo 1 of 2 is the client's payment confirmation
+    val isLink = Rules.needsPaymentPhoto(order.paymentStatus)
+    var payNoPhotoAsk by rememberSaveable { mutableStateOf(false) }
+    var paySkipAsk by rememberSaveable { mutableStateOf(false) }
 
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val path = capturePath
         val kind = PodKind.valueOf(captureKind)
         if (ok && path != null && File(path).length() > 0) {
-            onPhotoTaken(kind, File(path), captureReason)
+            if (kind == PodKind.PAYMENT) onPaymentPhotoTaken(File(path)) else onPhotoTaken(kind, File(path), captureReason)
         } else {
             path?.let { File(it).delete() }
-            if (pod == null) {
+            if (kind == PodKind.PAYMENT) {
+                payNoPhotoAsk = true
+            } else if (pod == null) {
                 if (kind == PodKind.DELIVERED) noPhotoAsk = true else askFail = true
             }
         }
@@ -226,9 +236,8 @@ fun OrderScreen(
             // Address
             SectionTitle("ADDRESS")
             InfoRow("Emirate", order.emirate?.uppercase() ?: "", FontWeight.Bold)
-            InfoRow("City / area", order.city ?: "")
+            InfoRow("District", order.apt ?: "", FontWeight.Bold)   // v1.7: the district (orders.apt); the city row is gone
             InfoRow("Villa / bldg", order.villa ?: "")
-            InfoRow("Apt", order.apt ?: "")
             if (order.scheduleText.isNotEmpty()) InfoRow("When", order.scheduleText, FontWeight.Bold)
             if (pickupAvailable && isEnRoute) {
                 InfoRow("Bag", if (order.pickedUpAt != null) "📦 picked up " + Rules.fmtTimeDubai(order.pickedUpAt) else "not scanned yet", if (order.pickedUpAt != null) FontWeight.Bold else FontWeight.Normal)
@@ -311,6 +320,8 @@ fun OrderScreen(
                                 cashTaken = null
                                 cashAsk = true
                                 onCheckCash()
+                            } else if (isLink) {
+                                startCapture(PodKind.PAYMENT, null)
                             } else {
                                 startCapture(PodKind.DELIVERED, null)
                             }
@@ -402,16 +413,135 @@ fun OrderScreen(
             order = order,
             pod = pod,
             cash = cashTaken,
+            payPhoto = if (isLink && payPhoto?.orderId == order.id) payPhoto else null,
             onConfirm = { onConfirmPod(cashTaken) },
             onRetake = {
                 val k = pod.kind
                 val r = pod.failReason
-                onCancelPod()
+                onCancelPod(false)   // keep the payment photo, retake only the door photo
                 startCapture(k, r)
             },
-            onCancel = onCancelPod
+            onCancel = { onCancelPod(true) }
         )
     }
+    // v1.7: payment confirmation — preview before the door photo
+    val pay = payPhoto
+    if (isLink && pay != null && pay.orderId == order.id && pay.file != null && pod == null && !paySkipAsk && !noPhotoAsk && !skipAsk) {
+        PaymentPhotoDialog(
+            order = order,
+            pay = pay,
+            onNext = { startCapture(PodKind.DELIVERED, null) },
+            onRetake = { startCapture(PodKind.PAYMENT, null) },
+            onCancel = onCancelPayment
+        )
+    }
+    if (payNoPhotoAsk) {
+        AlertDialog(
+            onDismissRequest = { payNoPhotoAsk = false },
+            title = { Text("No photo of the payment screen") },
+            text = { Text("${order.orderNum} is paid by link at the door. Take a photo of the client's screen with the payment confirmation, then the package at the door.") },
+            confirmButton = {
+                Button(onClick = { payNoPhotoAsk = false; startCapture(PodKind.PAYMENT, null) }) { Text("📷 Take photo") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { payNoPhotoAsk = false; paySkipAsk = true }) { Text("Can't take photo") }
+                    TextButton(onClick = { payNoPhotoAsk = false }) { Text("Cancel") }
+                }
+            }
+        )
+    }
+    if (paySkipAsk) {
+        PaySkipDialog(
+            order = order,
+            onConfirm = { reason -> paySkipAsk = false; onSkipPayment(reason); startCapture(PodKind.DELIVERED, null) },
+            onDismiss = { paySkipAsk = false }
+        )
+    }
+}
+
+/** v1.7 — photo 1 of 2 on a Link on delivery order: the client's screen with the payment confirmation. */
+@Composable
+private fun PaymentPhotoDialog(order: Order, pay: PayPhotoState, onNext: () -> Unit, onRetake: () -> Unit, onCancel: () -> Unit) {
+    Dialog(onDismissRequest = onCancel, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)) {
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth(0.94f)) {
+            Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                Text("Payment confirmation — ${order.orderNum}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Photo 1 of 2", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(10.dp))
+                val file = pay.file
+                val bitmap = remember(file?.path, pay.stage) {
+                    if (file != null && file.exists()) runCatching { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }.getOrNull() else null
+                }
+                if (bitmap != null) {
+                    Image(bitmap = bitmap, contentDescription = "Payment confirmation", contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).clip(RoundedCornerShape(10.dp)))
+                } else {
+                    Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
+                        if (pay.stage == PodStage.ERROR) Text(pay.error ?: "No photo", color = Palette.Red)
+                        else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(8.dp))
+                            Text("Preparing photo…", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Text("Check that the amount and the word Paid / Successful are readable.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = onNext,
+                    enabled = pay.ready && pay.stage != PodStage.ERROR,
+                    colors = ButtonDefaults.buttonColors(containerColor = Palette.Green, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().height(56.dp)
+                ) { Text("✓ Next — photo at the door", fontSize = 17.sp, fontWeight = FontWeight.Bold) }
+                Spacer(Modifier.height(6.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = onRetake) { Text("📷 Retake") }
+                    TextButton(onClick = onCancel) { Text("Cancel") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PaySkipDialog(order: Order, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var other by rememberSaveable { mutableStateOf("") }
+    val isOther = selected == Pod.PAY_SKIP_REASONS.last()
+    val reason = when {
+        selected == null -> null
+        isOther -> other.trim().takeIf { it.isNotEmpty() }
+        else -> selected
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("No payment photo — why?") },
+        text = {
+            Column {
+                Text("The admin sees the reason. Next comes the photo of the package at the door.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                Pod.PAY_SKIP_REASONS.forEach { r ->
+                    Row(
+                        Modifier.fillMaxWidth().selectable(selected = selected == r, onClick = { selected = r }, role = Role.RadioButton).padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected == r, onClick = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(r, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+                if (isOther) {
+                    OutlinedTextField(value = other, onValueChange = { other = it.take(200) }, label = { Text("What happened?") }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { reason?.let(onConfirm) }, enabled = reason != null) { Text("Next — photo at the door") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable
@@ -422,7 +552,7 @@ private fun MoneyCard(order: Order) {
             "Payment: " + (order.paymentStatus ?: "") + (if (order.cashToCollect <= 0.0) " — amount is 0, check with the dispatcher" else "")
         )
         Rules.PaymentMode.LINK -> Quad("PAYMENT LINK AT THE DOOR", Rules.fmtAed(order.amountDue), MaterialTheme.colorScheme.secondary, "Payment: " + (order.paymentStatus ?: "") + " — customer pays by link at the door")
-        Rules.PaymentMode.NONE -> Quad("NOTHING TO COLLECT", "", Palette.Green, "Payment: " + (order.paymentStatus ?: "") + " · order total " + Rules.fmtAed(order.amountDue))
+        Rules.PaymentMode.NONE -> Quad("NOTHING TO COLLECT", "", Palette.Green, "Payment: " + (order.paymentStatus ?: ""))   // v1.7: no total — the driver does not need it
         Rules.PaymentMode.UNKNOWN -> Quad(
             if (order.paymentStatus.isNullOrBlank()) "PAYMENT NOT SET" else "CHECK PAYMENT",
             Rules.fmtAed(order.amountDue),
@@ -517,7 +647,7 @@ private fun MoneyLine(order: Order, cash: Double? = null) {
 
 /** The photo with its stamp, then Confirm (upload + close) / Retake / Cancel. */
 @Composable
-private fun PodDialog(order: Order, pod: PodState, cash: Double?, onConfirm: () -> Unit, onRetake: () -> Unit, onCancel: () -> Unit) {
+private fun PodDialog(order: Order, pod: PodState, cash: Double?, payPhoto: PayPhotoState? = null, onConfirm: () -> Unit, onRetake: () -> Unit, onCancel: () -> Unit) {
     val uploading = pod.stage == PodStage.UPLOADING
     Dialog(
         onDismissRequest = { if (!uploading) onCancel() },
@@ -561,6 +691,14 @@ private fun PodDialog(order: Order, pod: PodState, cash: Double?, onConfirm: () 
                 Text("Check that the villa / flat number or the door is visible.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
                 if (pod.kind == PodKind.DELIVERED) MoneyLine(order, cash) else Text("Reason: " + (pod.failReason ?: ""), fontWeight = FontWeight.Bold)
+                if (pod.kind == PodKind.DELIVERED && payPhoto != null) {
+                    Text(
+                        if (payPhoto.skipReason != null) "💳 No payment photo: " + payPhoto.skipReason else "💳 Payment confirmation photo ✓",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (payPhoto.skipReason != null) Palette.Yellow else Palette.Green,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 if (pod.stage == PodStage.ERROR && pod.error != null && file != null) {
                     Spacer(Modifier.height(8.dp))
                     Text(pod.error, color = Palette.Red, style = MaterialTheme.typography.bodyMedium)

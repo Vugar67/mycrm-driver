@@ -40,13 +40,29 @@ enum class Tab { Deliveries, Done, Settings }
 
 data class FailRecord(val orderNum: String, val clientName: String?, val reason: String, val atMs: Long)
 
-enum class PodKind { DELIVERED, FAILED }
+enum class PodKind { DELIVERED, FAILED, PAYMENT }   // PAYMENT (v1.7) = the client's payment screen, Link on delivery
 
 /** v1.4: NONE = normal list · SEQUENCE = tap the orders in delivery order · ADJUST = ▲▼ / Add to route. */
 enum class RouteMode { NONE, SEQUENCE, ADJUST }
 
 /** v1.6: what the server said about a scanned bag — shown in a dialog (the picked-up case is only a toast). */
 data class ScanMessage(val text: String, val ok: Boolean)
+
+/**
+ * v1.7 — Link on delivery: the client's payment confirmation, taken BEFORE the photo at the door.
+ * Either a stamped file (stage PROCESSING → READY) or a skip reason; uploadedPath is kept between retries.
+ */
+data class PayPhotoState(
+    val orderId: String,
+    val stage: PodStage,
+    val file: java.io.File? = null,
+    val takenAtMs: Long = 0L,
+    val skipReason: String? = null,
+    val uploadedPath: String? = null,
+    val error: String? = null
+) {
+    val ready: Boolean get() = skipReason != null || (file != null && stage != PodStage.PROCESSING)
+}
 enum class PodStage { PROCESSING, READY, UPLOADING, ERROR }
 
 /** Photo at the door (v1.1): taken → stamped → confirmed → uploaded → order closed. */
@@ -85,6 +101,8 @@ data class UiState(
     /** Failed deliveries this session (the order leaves the driver's list, so we remember it locally). */
     val recentFails: List<FailRecord> = emptyList(),
     val pod: PodState? = null,
+    /** v1.7: the payment confirmation photo (or its skip reason) of the order being closed — Link on delivery only. */
+    val payPhoto: PayPhotoState? = null,
     /** WhatsApp templates from driver_messages (empty = built-in text). */
     val messages: List<center.mycrm.driver.core.MessageTemplate> = emptyList(),
     /** v1.3: the order is being re-read before the "Cash from the client" step (fresh amount). */
@@ -361,11 +379,92 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun cancelPod() {
-        val p = _state.value.pod ?: return
-        if (p.stage == PodStage.UPLOADING) return
-        p.file?.delete()
-        _state.update { it.copy(pod = null) }
+    /** Cancel of the door photo. all = true also drops the payment photo (the driver starts the close again). */
+    fun cancelPod(all: Boolean = true) {
+        val p = _state.value.pod
+        if (p != null && p.stage == PodStage.UPLOADING) return
+        p?.file?.delete()
+        if (all) _state.value.payPhoto?.file?.delete()
+        _state.update { it.copy(pod = null, payPhoto = if (all) null else it.payPhoto) }
+    }
+
+    // ---- v1.7: the client's payment confirmation (Link on delivery) ---------------------------
+
+    fun onPaymentPhotoTaken(order: Order, captured: java.io.File) {
+        val driver = _state.value.identity?.driverName ?: ""
+        val takenAt = System.currentTimeMillis()
+        _state.value.payPhoto?.file?.delete()
+        _state.update { it.copy(payPhoto = PayPhotoState(order.id, PodStage.PROCESSING, takenAtMs = takenAt)) }
+        viewModelScope.launch {
+            try {
+                val fix = awaitFix(10_000L)
+                val lines = center.mycrm.driver.pod.Pod.paymentStampLines(order.orderNum, driver, takenAt, fix)
+                val out = center.mycrm.driver.pod.Pod.newProcessedFile(getApplication())
+                val file = center.mycrm.driver.pod.Pod.process(captured, out, lines)
+                _state.update { st ->
+                    val cur = st.payPhoto
+                    if (cur == null || cur.orderId != order.id) st else st.copy(payPhoto = cur.copy(stage = PodStage.READY, file = file, error = null, uploadedPath = null))
+                }
+            } catch (e: Exception) {
+                _state.update { st -> st.copy(payPhoto = st.payPhoto?.copy(stage = PodStage.ERROR, error = e.message ?: "Could not prepare the photo")) }
+            }
+        }
+    }
+
+    /** No photo of the payment screen — only with a reason (logged, the admin sees it). */
+    fun skipPaymentPhoto(order: Order, reason: String) {
+        _state.value.payPhoto?.file?.delete()
+        _state.update { it.copy(payPhoto = PayPhotoState(order.id, PodStage.READY, skipReason = reason)) }
+    }
+
+    fun cancelPaymentPhoto() {
+        _state.value.payPhoto?.file?.delete()
+        _state.update { it.copy(payPhoto = null) }
+    }
+
+    /** Link on delivery: the payment confirmation (photo or reason) must be there before the order can be closed. */
+    private fun paymentMissing(order: Order): Boolean {
+        if (!Rules.needsPaymentPhoto(order.paymentStatus)) return false
+        val p = _state.value.payPhoto
+        if (p == null || p.orderId != order.id || !p.ready) {
+            toast("Take the photo of the client's payment confirmation first")
+            return true
+        }
+        return false
+    }
+
+    /** Uploads the payment photo (3 tries) and returns its storage path; null when it was skipped. */
+    private suspend fun uploadPaymentPhoto(order: Order): String? {
+        val p = _state.value.payPhoto ?: return null
+        if (p.orderId != order.id || p.file == null) return null
+        p.uploadedPath?.let { return it }
+        var last: Exception? = null
+        for (attempt in 0 until 3) {
+            try {
+                val path = repo.uploadPhoto(order.id, p.file, p.takenAtMs, prefix = "pay-")
+                _state.update { it.copy(payPhoto = it.payPhoto?.copy(uploadedPath = path)) }
+                return path
+            } catch (e: SupabaseException) {
+                throw e
+            } catch (e: AuthRequiredException) {
+                throw e
+            } catch (e: Exception) {
+                last = e
+                kotlinx.coroutines.delay(if (attempt == 0) 2_000L else 5_000L)
+            }
+        }
+        throw last ?: IllegalStateException("upload failed")
+    }
+
+    private fun paymentArgs(order: Order): Pair<String?, String?> {
+        if (!Rules.needsPaymentPhoto(order.paymentStatus)) return null to null
+        val p = _state.value.payPhoto ?: return null to null
+        return p.uploadedPath to (if (p.uploadedPath == null) p.skipReason else null)
+    }
+
+    private fun clearPaymentPhoto() {
+        _state.value.payPhoto?.file?.delete()
+        _state.update { it.copy(payPhoto = null) }
     }
 
     /** Re-read the orders before the cash step, so the driver sees the amount as it is now (the dispatcher may have changed it). */
@@ -391,9 +490,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (p.orderId != order.id || p.file == null || p.stage == PodStage.UPLOADING || p.stage == PodStage.PROCESSING) return
         if (_state.value.busy) return
         if (p.kind == PodKind.DELIVERED && cashMissing(order, cash)) return
+        if (p.kind == PodKind.DELIVERED && paymentMissing(order)) return
         viewModelScope.launch {
             _state.update { it.copy(busy = true, pod = it.pod?.copy(stage = PodStage.UPLOADING, error = null)) }
             try {
+                if (p.kind == PodKind.DELIVERED) uploadPaymentPhoto(order)   // v1.7: the payment screen goes first (kept between tries)
                 var path = p.uploadedPath
                 if (path == null) {
                     var last: Exception? = null
@@ -414,7 +515,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     _state.update { it.copy(pod = it.pod?.copy(uploadedPath = path)) }
                 }
                 if (p.kind == PodKind.DELIVERED) {
-                    repo.markDelivered(order.id, path, null, p.fix, if (order.paymentMode == Rules.PaymentMode.CASH) cash else null)
+                    val (payPath, paySkip) = paymentArgs(order)
+                    repo.markDelivered(order.id, path, null, p.fix, if (order.paymentMode == Rules.PaymentMode.CASH) cash else null, payPath, paySkip)
+                    clearPaymentPhoto()
                     afterDelivered(order, cash)
                 } else {
                     val reason = p.failReason ?: "Other"
@@ -430,10 +533,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // the server refused (order no longer yours / not En Route / photo refused) — nothing to retry
                 _state.update { it.copy(pod = null) }
                 p.file.delete()
+                clearPaymentPhoto()
                 toast(e.message ?: "Server refused the change")
                 refresh()
             } catch (e: Exception) {
-                _state.update { it.copy(pod = it.pod?.copy(stage = PodStage.ERROR, error = "No connection — the photo was NOT sent. Tap Try again (no need to retake).")) }
+                _state.update { it.copy(pod = it.pod?.copy(stage = PodStage.ERROR, error = "No connection — the photos were NOT sent. Tap Try again (no need to retake).")) }
             } finally {
                 _state.update { it.copy(busy = false) }
             }
@@ -443,8 +547,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Delivered without a photo — only with a reason (logged, the dispatcher sees it). */
     fun markDeliveredNoPhoto(order: Order, reason: String, cash: Double?) {
         if (cashMissing(order, cash)) return
+        if (paymentMissing(order)) return
         action {
-            repo.markDelivered(order.id, null, reason, awaitFix(3_000L), if (order.paymentMode == Rules.PaymentMode.CASH) cash else null)
+            uploadPaymentPhoto(order)   // v1.7
+            val (payPath, paySkip) = paymentArgs(order)
+            repo.markDelivered(order.id, null, reason, awaitFix(3_000L), if (order.paymentMode == Rules.PaymentMode.CASH) cash else null, payPath, paySkip)
+            clearPaymentPhoto()
             afterDelivered(order, cash)
         }
     }

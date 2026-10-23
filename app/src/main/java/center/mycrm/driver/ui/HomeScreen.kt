@@ -474,7 +474,7 @@ fun OrderCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            val place = listOfNotNull(order.emirate?.uppercase(), order.city).filter { it.isNotBlank() }.joinToString(" · ")
+            val place = Rules.placeLine(order.emirate, order.apt)   // v1.7: emirate · district (orders.apt), the city is gone
             if (place.isNotEmpty()) {
                 Text(place, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             }

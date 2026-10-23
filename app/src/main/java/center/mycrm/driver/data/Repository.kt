@@ -205,9 +205,9 @@ class Repository(private val sb: SupabaseClient) {
         null
     }
 
-    /** Uploads the stamped photo into delivery-photos/<order>/<name>.jpg and returns the object name. */
-    suspend fun uploadPhoto(orderId: String, file: java.io.File, takenAtMs: Long): String {
-        val name = center.mycrm.driver.pod.Pod.objectName(orderId, takenAtMs)
+    /** Uploads the stamped photo into delivery-photos/<order>/<name>.jpg and returns the object name (prefix "pay-" for the payment screen). */
+    suspend fun uploadPhoto(orderId: String, file: java.io.File, takenAtMs: Long, prefix: String = ""): String {
+        val name = center.mycrm.driver.pod.Pod.objectName(orderId, takenAtMs, prefix)
         sb.uploadObject("delivery-photos", name, file)
         return name
     }
@@ -220,12 +220,18 @@ class Repository(private val sb: SupabaseClient) {
         return this
     }
 
-    /** cash = what the driver took (Cash on delivery only; the database refuses less than due). */
-    suspend fun markDelivered(orderId: String, photoPath: String?, skipReason: String?, fix: center.mycrm.driver.pod.Fix?, cash: Double?): JSONObject? {
+    /**
+     * cash = what the driver took (Cash on delivery only; the database refuses less than due).
+     * payPath / paySkip = the client's payment confirmation photo, or why there is none (Link on delivery only, v1.7).
+     */
+    suspend fun markDelivered(orderId: String, photoPath: String?, skipReason: String?, fix: center.mycrm.driver.pod.Fix?, cash: Double?,
+                              payPath: String? = null, paySkip: String? = null): JSONObject? {
         val args = JSONObject().put("p_order_id", orderId).put("p_app_version", appVersion)
         if (photoPath != null) args.put("p_photo_path", photoPath)
         if (skipReason != null) args.put("p_skip_reason", skipReason)
         if (cash != null) args.put("p_cash_received", Rules.round2(cash))
+        if (payPath != null) args.put("p_payment_photo_path", payPath)
+        if (paySkip != null) args.put("p_payment_skip", paySkip)
         return sb.rpc("driver_mark_delivered", args.putFix(fix)) as? JSONObject
     }
 
