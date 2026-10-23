@@ -1,7 +1,7 @@
-run: 5  ref: main  sha: 6559659819426a8dd46d21979aa39c14c78f12bf
+run: 20  ref: main  sha: f97221064c22abdd9c3bb849266356511ada2c96
 status: success
-version: 0.0.5-dev code 5
-time: 2026-10-16T14:05:06Z
+version: 0.0.20-dev code 20
+time: 2026-10-23T17:37:12Z
 
 ===== errors =====
 
@@ -12,8 +12,8 @@ Daemon will be stopped at the end of the build
 > Task :app:preBuild UP-TO-DATE
 > Task :app:preDebugBuild UP-TO-DATE
 > Task :app:generateDebugBuildConfig
-> Task :app:checkDebugAarMetadata
 > Task :app:generateDebugResValues FROM-CACHE
+> Task :app:checkDebugAarMetadata
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources FROM-CACHE
 > Task :app:mergeDebugResources FROM-CACHE
@@ -30,16 +30,16 @@ Daemon will be stopped at the end of the build
 > Task :app:processDebugResources
 > Task :app:compileDebugKotlin
 > Task :app:compileDebugJavaWithJavac
-> Task :app:bundleDebugClassesToCompileJar
 > Task :app:processDebugJavaRes
 > Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
 > Task :app:compileDebugUnitTestKotlin
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
 > Task :app:processDebugUnitTestJavaRes
 > Task :app:testDebugUnitTest
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1792159463605.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1792776967671.json
 
-BUILD SUCCESSFUL in 31s
+BUILD SUCCESSFUL in 49s
 24 actionable tasks: 16 executed, 8 from cache
 
 ===== build (tail) =====
@@ -92,12 +92,12 @@ Unable to strip the following libraries, packaging them as they are: libandroidx
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1792159493592.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1792777013638.json
 
-BUILD SUCCESSFUL in 13s
+BUILD SUCCESSFUL in 19s
 37 actionable tasks: 14 executed, 5 from cache, 18 up-to-date
 
 ===== signer =====
 
 ===== test reports =====
-<testsuite name="center.mycrm.driver.core.RulesTest" tests="30" skipped="0" failures="0" errors="0" timestamp="2026-10-16T14:04:50" hostname="runnervm8k3b6" time="0.09">
+<testsuite name="center.mycrm.driver.core.RulesTest" tests="56" skipped="0" failures="0" errors="0" timestamp="2026-10-23T17:36:49" hostname="runnervm8k3b6" time="0.163">
