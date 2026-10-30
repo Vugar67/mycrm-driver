@@ -31,7 +31,8 @@ object Rules {
     /**
      * What the driver has to do about money at the door. Derived from orders.payment_status
      * (refs.paymentStatus on 16.10.2026: Cash on delivery · Link on delivery · Crypto · Accounts ·
-     * Paid via Tabby/Tamara · Paid cash · Paid via transfer · Paid via link · Gift · Replacement).
+     * Paid via Tabby/Tamara · Paid cash · Paid via transfer · Paid via link · Gift · Replacement;
+     * + Cash to Collect on 30.10.2026 — collected like Cash on delivery).
      */
     enum class PaymentMode {
         /** Collect cash = order total. */
@@ -55,6 +56,9 @@ object Rules {
         if (s.isEmpty()) return PaymentMode.UNKNOWN
         if (s.contains("link on delivery")) return PaymentMode.LINK
         if (s.contains("on delivery") || s == "cod" || s == "cash") return PaymentMode.CASH
+        // v1.8.0 (30.10.2026): "Cash to Collect" is cash at the door exactly like Cash on delivery — same as the core
+        // (_isCashOnDelivery, v13.103) and the database (_is_cod, add_cash_to_collect.sql)
+        if (s.contains("cash to collect")) return PaymentMode.CASH
         if (s.startsWith("paid") || s in SETTLED_STATUSES) return PaymentMode.NONE
         return PaymentMode.UNKNOWN
     }
@@ -83,7 +87,7 @@ object Rules {
         return if (t < 0) 0.0 else Math.round(t * 100.0) / 100.0
     }
 
-    /** Cash the driver takes: only for "Cash on delivery". Link / paid / unknown → 0 (the UI shows the amount separately). */
+    /** Cash the driver takes: only for "Cash on delivery" / "Cash to Collect". Link / paid / unknown → 0 (the UI shows the amount separately). */
     fun cashToCollect(
         total: Double?,
         subtotal: Double?,

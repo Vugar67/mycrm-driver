@@ -54,6 +54,23 @@ class RulesTest {
     }
 
     @Test
+    fun cashToCollectIsCollectedExactlyLikeCashOnDelivery() {
+        // v1.8.0 (30.10.2026): same rule as the core v13.103 and the DB (_is_cod)
+        for (st in listOf("Cash to Collect", "cash to collect", "  CASH  TO   COLLECT ")) {
+            assertEquals(st, Rules.PaymentMode.CASH, Rules.paymentMode(st))
+            assertFalse(st, Rules.isPaid(st))
+            assertFalse(st, Rules.needsPaymentPhoto(st))
+        }
+        assertEquals(1030.0, Rules.cashToCollect(999.0, 999.0, 50.0, 20.0, "Cash to Collect", 1000.0), 0.001)
+        assertEquals(
+            Rules.cashToCollect(1250.0, 1200.0, 50.0, 0.0, "Cash on delivery"),
+            Rules.cashToCollect(1250.0, 1200.0, 50.0, 0.0, "Cash to Collect"), 0.001
+        )
+        // "Paid cash" stays settled
+        assertEquals(Rules.PaymentMode.NONE, Rules.paymentMode("Paid cash"))
+    }
+
+    @Test
     fun linkOnDeliveryIsNotCash() {
         assertEquals(Rules.PaymentMode.LINK, Rules.paymentMode("Link on delivery"))
         assertEquals(0.0, Rules.cashToCollect(900.0, 900.0, 0.0, 0.0, "Link on delivery"), 0.001)
