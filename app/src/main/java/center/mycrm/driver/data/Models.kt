@@ -56,12 +56,14 @@ data class Order(
     val routeSeq: Int? = null,
     /** v1.6: the driver scanned the bag label (took the package from the warehouse); null = not yet. */
     val pickedUpAt: String? = null,
-    val pickedUpBy: String? = null
+    val pickedUpBy: String? = null,
+    /** v1.9: the "5% VAT" box on the order (orders.vat_applied) — the amount at the door is net + 5%, like the invoice. */
+    val vatApplied: Boolean = false
 ) {
     val cashToCollect: Double
-        get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus, itemsSubtotal)
+        get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus, itemsSubtotal, vatApplied)
 
-    val amountDue: Double get() = Rules.amountDue(total, subtotal, deliveryCharge, discount, itemsSubtotal)
+    val amountDue: Double get() = Rules.amountDue(total, subtotal, deliveryCharge, discount, itemsSubtotal, vatApplied)
 
     /** Delivered orders: the cash the driver entered, else the estimate (orders closed by the dispatcher without an amount). */
     val cashTaken: Double get() = if (paymentMode == Rules.PaymentMode.CASH) Rules.cashTaken(cashReceived, cashDue ?: cashToCollect) else 0.0
@@ -150,7 +152,8 @@ object Parse {
         cashReceived = o.num("cash_received"),
         routeSeq = o.num("route_seq")?.toInt(),
         pickedUpAt = o.str("picked_up_at"),
-        pickedUpBy = o.str("picked_up_by")
+        pickedUpBy = o.str("picked_up_by"),
+        vatApplied = o.optBoolean("vat_applied", false)   // v1.9: null / absent → no VAT
     )
 
     fun orders(arr: JSONArray): List<Order> {

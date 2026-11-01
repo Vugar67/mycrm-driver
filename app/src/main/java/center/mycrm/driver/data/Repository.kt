@@ -33,7 +33,9 @@ class Repository(private val sb: SupabaseClient) {
         "payment_status", "delivery_status", "subtotal", "delivery_charge", "discount", "total",
         "delivered_at", "updated_by", "driver", "content_type",
         // v1.3 (add_driver_cash.sql must be run before this version is released)
-        "cash_due", "cash_received"
+        "cash_due", "cash_received",
+        // v1.9: the 5% VAT box of the order (column since core v13.53, July 2026)
+        "vat_applied"
     )
 
     /**

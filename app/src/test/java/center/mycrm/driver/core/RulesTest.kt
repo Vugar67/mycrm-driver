@@ -71,6 +71,27 @@ class RulesTest {
     }
 
     @Test
+    fun vatIsAddedOnTopWhenTheOrderHasVatApplied() {
+        // v1.9.0 (01.11.2026): ORD-124228 — items 1224 + delivery 60 = 1284 net; 5% VAT box ticked → 1348.20 (the invoice's Balance Due)
+        assertEquals(1348.20, Rules.amountDue(1284.0, 1224.0, 60.0, 0.0, 1224.0, true), 0.001)
+        assertEquals(1348.20, Rules.cashToCollect(1284.0, 1224.0, 60.0, 0.0, "Cash on delivery", 1224.0, true), 0.001)
+        assertEquals(1348.20, Rules.cashToCollect(1284.0, 1224.0, 60.0, 0.0, "Cash to Collect", 1224.0, true), 0.001)
+        // without the flag — net, exactly as before
+        assertEquals(1284.0, Rules.amountDue(1284.0, 1224.0, 60.0, 0.0, 1224.0, false), 0.001)
+        assertEquals(1284.0, Rules.amountDue(1284.0, 1224.0, 60.0, 0.0, 1224.0), 0.001)
+        // two-step rounding like the invoice: VAT = round2(net × 5%), due = net + VAT
+        assertEquals(635.00, Rules.withVat(604.76, true), 0.001)      // ORD-124261: 30.238 → 30.24
+        assertEquals(1111.95, Rules.withVat(1059.0, true), 0.001)     // ORD-124290
+        assertEquals(1206.45, Rules.withVat(1149.0, true), 0.001)     // ORD-123985
+        assertEquals(0.0, Rules.withVat(-5.0, true), 0.001)
+        // no loaded lines → orders.total (net) + VAT
+        assertEquals(1348.20, Rules.amountDue(1284.0, null, null, null, null, true), 0.001)
+        // link at the door shows the same gross amount; paid orders stay 0 cash
+        assertEquals(0.0, Rules.cashToCollect(1284.0, 1224.0, 60.0, 0.0, "Link on delivery", 1224.0, true), 0.001)
+        assertEquals(0.0, Rules.cashToCollect(1284.0, 1224.0, 60.0, 0.0, "Paid cash", 1224.0, true), 0.001)
+    }
+
+    @Test
     fun linkOnDeliveryIsNotCash() {
         assertEquals(Rules.PaymentMode.LINK, Rules.paymentMode("Link on delivery"))
         assertEquals(0.0, Rules.cashToCollect(900.0, 900.0, 0.0, 0.0, "Link on delivery"), 0.001)

@@ -68,23 +68,39 @@ object Rules {
 
     fun isPaid(paymentStatus: String?): Boolean = paymentMode(paymentStatus) == PaymentMode.NONE
 
+    /** UAE VAT rate printed on the invoice (v13.50). */
+    const val VAT_RATE = 0.05
+
+    /**
+     * v1.9.0 (01.11.2026, Vugar): the amount at the door = the invoice's Balance Due. When the order has
+     * vat_applied = true (the "5% VAT" box ticked in the cart), 5% is added ON TOP: VAT = round2(net × 5%),
+     * due = net + VAT — the same two-step rounding as the invoice / cart, the core v13.105 and the DB
+     * (add_cash_vat.sql). Without the flag the amount is net, as before. Never below 0.
+     */
+    fun withVat(net: Double, vatApplied: Boolean): Double {
+        val n = if (net < 0) 0.0 else net
+        return if (vatApplied) round2(n + round2(n * VAT_RATE)) else round2(n)
+    }
+
     /**
      * Amount due at the door, the way the core's driver WhatsApp message and ✓ Delivered dialog compute it:
-     * Σ(item price × qty) + delivery − discount. Without loaded items: orders.total, else subtotal + delivery − discount.
+     * Σ(item price × qty) + delivery − discount (+ 5% VAT when vatApplied, v1.9.0).
+     * Without loaded items: orders.total, else subtotal + delivery − discount.
      */
     fun amountDue(
         total: Double?,
         subtotal: Double?,
         deliveryCharge: Double?,
         discount: Double?,
-        itemsSubtotal: Double? = null
+        itemsSubtotal: Double? = null,
+        vatApplied: Boolean = false
     ): Double {
         val t = when {
             itemsSubtotal != null -> itemsSubtotal + (deliveryCharge ?: 0.0) - (discount ?: 0.0)
             total != null -> total
             else -> (subtotal ?: 0.0) + (deliveryCharge ?: 0.0) - (discount ?: 0.0)
         }
-        return if (t < 0) 0.0 else Math.round(t * 100.0) / 100.0
+        return withVat(t, vatApplied)
     }
 
     /** Cash the driver takes: only for "Cash on delivery" / "Cash to Collect". Link / paid / unknown → 0 (the UI shows the amount separately). */
@@ -94,9 +110,10 @@ object Rules {
         deliveryCharge: Double?,
         discount: Double?,
         paymentStatus: String?,
-        itemsSubtotal: Double? = null
+        itemsSubtotal: Double? = null,
+        vatApplied: Boolean = false
     ): Double = when (paymentMode(paymentStatus)) {
-        PaymentMode.CASH -> amountDue(total, subtotal, deliveryCharge, discount, itemsSubtotal)
+        PaymentMode.CASH -> amountDue(total, subtotal, deliveryCharge, discount, itemsSubtotal, vatApplied)
         else -> 0.0
     }
 

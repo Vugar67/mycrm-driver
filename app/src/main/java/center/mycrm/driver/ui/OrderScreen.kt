@@ -549,9 +549,11 @@ private fun MoneyCard(order: Order) {
     val (title, amount, color, hint) = when (order.paymentMode) {
         Rules.PaymentMode.CASH -> Quad(
             "CASH TO COLLECT", Rules.fmtAed(order.cashToCollect), Palette.Orange,
-            "Payment: " + (order.paymentStatus ?: "") + (if (order.cashToCollect <= 0.0) " — amount is 0, check with the dispatcher" else "")
+            "Payment: " + (order.paymentStatus ?: "") + (if (order.vatApplied) " · incl. 5% VAT" else "") +
+                (if (order.cashToCollect <= 0.0) " — amount is 0, check with the dispatcher" else "")
         )
-        Rules.PaymentMode.LINK -> Quad("PAYMENT LINK AT THE DOOR", Rules.fmtAed(order.amountDue), MaterialTheme.colorScheme.secondary, "Payment: " + (order.paymentStatus ?: "") + " — customer pays by link at the door")
+        Rules.PaymentMode.LINK -> Quad("PAYMENT LINK AT THE DOOR", Rules.fmtAed(order.amountDue), MaterialTheme.colorScheme.secondary,
+            "Payment: " + (order.paymentStatus ?: "") + (if (order.vatApplied) " · incl. 5% VAT" else "") + " — customer pays by link at the door")
         Rules.PaymentMode.NONE -> Quad("NOTHING TO COLLECT", "", Palette.Green, "Payment: " + (order.paymentStatus ?: ""))   // v1.7: no total — the driver does not need it
         Rules.PaymentMode.UNKNOWN -> Quad(
             if (order.paymentStatus.isNullOrBlank()) "PAYMENT NOT SET" else "CHECK PAYMENT",
@@ -763,6 +765,7 @@ private fun CashDialog(order: Order, checking: Boolean, onConfirm: (Double) -> U
                 Spacer(Modifier.height(10.dp))
                 Text("DUE", style = MaterialTheme.typography.labelLarge, color = Palette.Orange, fontWeight = FontWeight.Bold)
                 Text(Rules.fmtAed(due), fontSize = 30.sp, fontWeight = FontWeight.Black, color = Palette.Orange)
+                if (order.vatApplied) Text("incl. 5% VAT — same as the invoice", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)   // v1.9
                 if (checking) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
