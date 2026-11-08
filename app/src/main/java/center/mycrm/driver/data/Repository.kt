@@ -16,7 +16,9 @@ data class Snapshot(
     /** v1.5: planned trips up to today + trips done today (empty when add_trips.sql is not run). */
     val trips: List<Trip> = emptyList(),
     /** v1.6: false = orders.picked_up_at is not in the database yet (add_driver_pickup.sql not run) → no Scan button. */
-    val pickupAvailable: Boolean = true
+    val pickupAvailable: Boolean = true,
+    /** v1.10: false = orders.geo_* are not in the database yet (add_order_geo.sql not run) → no Map button. */
+    val geoAvailable: Boolean = true
 )
 
 /** Thrown when the account exists but is not a usable driver account. */
@@ -45,11 +47,14 @@ class Repository(private val sb: SupabaseClient) {
      */
     private val routeColumns = listOf("route_seq")
     private val pickupColumns = listOf("picked_up_at", "picked_up_by")
+    private val geoColumns = listOf("geo_lat", "geo_lng", "geo_src")   // v1.10 (add_order_geo.sql)
     @Volatile private var routeMissing = false
     @Volatile private var pickupMissing = false
+    @Volatile private var geoMissing = false
 
     private fun columns(): String =
-        (orderColumns + (if (routeMissing) emptyList() else routeColumns) + (if (pickupMissing) emptyList() else pickupColumns)).joinToString(",")
+        (orderColumns + (if (routeMissing) emptyList() else routeColumns) + (if (pickupMissing) emptyList() else pickupColumns)
+            + (if (geoMissing) emptyList() else geoColumns)).joinToString(",")
 
     private suspend fun selectOrders(params: Map<String, String>): JSONArray {
         for (attempt in 0 until 3) {
@@ -59,6 +64,7 @@ class Repository(private val sb: SupabaseClient) {
                 val m = e.message ?: ""
                 if (e.status == 400 && !routeMissing && routeColumns.any { m.contains(it) }) routeMissing = true
                 else if (e.status == 400 && !pickupMissing && pickupColumns.any { m.contains(it) }) pickupMissing = true
+                else if (e.status == 400 && !geoMissing && geoColumns.any { m.contains(it) }) geoMissing = true
                 else throw e
             }
         }
@@ -157,7 +163,7 @@ class Repository(private val sb: SupabaseClient) {
                 "limit" to "200"
             )
         )
-        return Snapshot(orders, items, Parse.orders(doneRaw), routeAvailable = !routeMissing, trips = loadTrips(), pickupAvailable = !pickupMissing)
+        return Snapshot(orders, items, Parse.orders(doneRaw), routeAvailable = !routeMissing, trips = loadTrips(), pickupAvailable = !pickupMissing, geoAvailable = !geoMissing)
     }
 
     /** v1.5: without add_trips.sql the function is missing → no trips (asked again every 5 minutes). */

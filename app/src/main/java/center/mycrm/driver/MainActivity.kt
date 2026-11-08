@@ -47,6 +47,7 @@ import center.mycrm.driver.ui.DeliveriesTab
 import center.mycrm.driver.ui.DoneTab
 import center.mycrm.driver.ui.DriverTheme
 import center.mycrm.driver.ui.LoginScreen
+import center.mycrm.driver.ui.MapScreen
 import center.mycrm.driver.ui.OrderScreen
 import center.mycrm.driver.ui.RouteActions
 import center.mycrm.driver.ui.ScanActions
@@ -162,6 +163,27 @@ fun App(vm: AppViewModel) {
             onSignIn = vm::signIn,
             onInstallUpdate = vm::installUpdate
         )
+        Screen.Map -> {   // v1.10: the deliveries on a map
+            Scaffold(
+                snackbarHost = { SnackbarHost(snackbar) },
+                topBar = {
+                    TopAppBar(
+                        title = { Text("Map · ${state.orders.size} stop" + (if (state.orders.size == 1) "" else "s"), fontWeight = FontWeight.Bold) },
+                        navigationIcon = { TextButton(onClick = vm::closeMap) { Text("‹ Back") } },
+                        actions = { TextButton(onClick = vm::refreshNow) { Text("↻") } },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+                    )
+                },
+                containerColor = MaterialTheme.colorScheme.background
+            ) { padding ->
+                Column(Modifier.padding(padding).fillMaxSize()) {
+                    StatusLine(state.offline, state.lastUpdateMs)
+                    Box(Modifier.weight(1f)) {
+                        MapScreen(state = state, onBack = vm::closeMap, onOpen = { vm.openOrder(it.id, fromMap = true) })
+                    }
+                }
+            }
+        }
         Screen.Home, is Screen.OrderDetail -> {
             val order = state.selectedOrder
             val inDetail = screen is Screen.OrderDetail && order != null
@@ -279,7 +301,8 @@ fun App(vm: AppViewModel) {
                                         message = state.scanMessage,
                                         onScanned = vm::onScanned,
                                         onDismiss = vm::dismissScanMessage
-                                    )
+                                    ),
+                                    onOpenMap = if (state.geoAvailable) vm::openMap else null   // v1.10
                                 )
                                 Tab.Done -> DoneTab(state, onUndo = vm::undoDelivered, nowMs = nowMs, onTripUndo = vm::tripUndo)
                                 Tab.Settings -> SettingsTab(

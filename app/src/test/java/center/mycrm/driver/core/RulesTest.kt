@@ -582,4 +582,58 @@ class RulesTest {
         assertEquals("JVC", Rules.placeLine(null, "JVC"))
         assertEquals("", Rules.placeLine("", null))
     }
+
+    // ---- v1.10: the map of the deliveries ----
+
+    private data class G(val id: String, val lat: Double?, val lng: Double?, val src: String?)
+
+    @Test
+    fun hasMapPointOnlyForPinOrDistrictWithCoordinatesInRange() {
+        assertTrue(Rules.hasMapPoint("pin", 25.2, 55.3))
+        assertTrue(Rules.hasMapPoint("district", 25.31, 55.42))
+        assertFalse(Rules.hasMapPoint("none", null, null))
+        assertFalse(Rules.hasMapPoint(null, 25.2, 55.3))          // not resolved yet (or before the migration)
+        assertFalse(Rules.hasMapPoint("pin", null, 55.3))
+        assertFalse(Rules.hasMapPoint("pin", 125.2, 55.3))        // out of range
+        assertFalse(Rules.hasMapPoint("pin", 0.0, 0.0))           // null island
+    }
+
+    @Test
+    fun mapPinsNumberByRoutePositionAndMarkNextAndApprox() {
+        val orders = listOf(
+            G("a", 25.1, 55.1, "pin"), G("b", 25.2, 55.2, "district"), G("c", null, null, "none"), G("d", 25.3, 55.3, "pin"), G("e", 25.4, 55.4, null)
+        )
+        val (pins, missing) = Rules.mapPins(orders, { it.id }, { it.lat }, { it.lng }, { it.src }, position = mapOf("a" to 1, "b" to 2), nextId = "a")
+        assertEquals(listOf("a", "b", "d"), pins.map { it.orderId })
+        assertEquals(listOf("c", "e"), missing)                       // none and not-yet-resolved are listed, not drawn
+        val a = pins[0]; val b = pins[1]; val d = pins[2]
+        assertTrue(a.isNext && a.number == 1 && !a.approx)
+        assertTrue(!b.isNext && b.number == 2 && b.approx)
+        assertTrue(!d.isNext && d.number == null && !d.approx)    // placed nowhere → "•"
+        assertEquals("1", Rules.pinLabel(a.number, a.approx))
+        assertEquals("≈2", Rules.pinLabel(b.number, b.approx))
+        assertEquals("•", Rules.pinLabel(d.number, d.approx))
+        assertEquals("≈•", Rules.pinLabel(null, true))
+    }
+
+    @Test
+    fun mapBoundsGrowByPaddingAndNeverCollapseToOnePoint() {
+        assertNull(Rules.mapBounds(emptyList()))
+        val one = Rules.mapBounds(listOf(25.2 to 55.3))!!
+        assertEquals(25.2, one.centerLat, 1e-9); assertEquals(55.3, one.centerLng, 1e-9)
+        assertEquals(0.01, one.north - one.south, 1e-9)              // the minimum span, not a single roof
+        assertEquals(0.01, one.east - one.west, 1e-9)
+        val two = Rules.mapBounds(listOf(25.0 to 55.0, 25.2 to 55.4))!!
+        assertEquals(25.23, two.north, 1e-9); assertEquals(24.97, two.south, 1e-9)   // 0.2 span + 15 % each side
+        assertEquals(55.46, two.east, 1e-9); assertEquals(54.94, two.west, 1e-9)
+        // a point out of range is ignored, not spread over the planet
+        val clean = Rules.mapBounds(listOf(25.0 to 55.0, 999.0 to 55.0))!!
+        assertEquals(25.0, clean.centerLat, 1e-9)
+    }
+
+    @Test
+    fun noPointLineListsTheOrders() {
+        assertNull(Rules.noPointLine(emptyList()))
+        assertEquals("No map point: ORD-1, ORD-2", Rules.noPointLine(listOf("ORD-1", "ORD-2")))
+    }
 }

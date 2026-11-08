@@ -111,7 +111,8 @@ fun DeliveriesTab(
     onRefresh: () -> Unit,
     route: RouteActions,
     onTripDone: (Trip) -> Unit = {},
-    scan: ScanActions = ScanActions(false, false, null, {}, {})
+    scan: ScanActions = ScanActions(false, false, null, {}, {}),
+    onOpenMap: (() -> Unit)? = null   // v1.10: null = the map is not available (add_order_geo.sql not run)
 ) {
     val trips = state.tripsPlanned
     val launchScan = rememberBagScanner(scan.onScanned)
@@ -203,6 +204,10 @@ fun DeliveriesTab(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 4.dp).weight(1f)
                     )
+                    if (onOpenMap != null && mode == RouteMode.NONE) {   // v1.10: all the stops on a map
+                        OutlinedButton(onClick = onOpenMap, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("🗺 Map") }
+                        if (routeOn) Spacer(Modifier.width(6.dp))
+                    }
                     if (routeOn && mode == RouteMode.NONE) {
                         OutlinedButton(onClick = route.onStartSequence, enabled = !state.routeSaving, contentPadding = PaddingValues(horizontal = 12.dp)) {
                             Text(if (state.hasRoute) "↻ Sequence" else "① Sequence")

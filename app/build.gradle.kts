@@ -96,6 +96,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // v1.6: QR scanner for the bag label (pure Java ZXing — works without Google Play services, e.g. Huawei)
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // v1.10: the map of the deliveries — OpenStreetMap tiles, pure Java, no Google services needed
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     testImplementation("junit:junit:4.13.2")
 }

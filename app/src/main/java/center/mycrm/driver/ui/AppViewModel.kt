@@ -34,6 +34,8 @@ sealed class Screen {
     data object Login : Screen()
     data object Home : Screen()
     data class OrderDetail(val orderId: String) : Screen()
+    /** v1.10: the map of the driver's deliveries (opened from My deliveries). */
+    data object Map : Screen()
 }
 
 enum class Tab { Deliveries, Done, Settings }
@@ -118,6 +120,10 @@ data class UiState(
     val routeWarnings: List<String>? = null,
     /** v1.6: false until add_driver_pickup.sql is run → no Scan button. */
     val pickupAvailable: Boolean = true,
+    /** v1.10: false until add_order_geo.sql is run (the select falls back without geo_*) → no Map button. */
+    val geoAvailable: Boolean = true,
+    /** v1.10: the order screen was opened from the map → ‹ Back returns to the map. */
+    val backToMap: Boolean = false,
     val scanBusy: Boolean = false,
     val scanMessage: ScanMessage? = null,
     /** v1.5: trips (staff pick-up / drop-off, tasks) — planned up to today and done today. */
@@ -288,6 +294,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     doneToday = snap.doneToday,
                     routeAvailable = snap.routeAvailable,
                     pickupAvailable = snap.pickupAvailable,
+                    geoAvailable = snap.geoAvailable,
                     trips = snap.trips,
                     lastUpdateMs = System.currentTimeMillis(),
                     offline = false,
@@ -310,12 +317,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(tab = tab) }
     }
 
-    fun openOrder(orderId: String) {
-        _state.update { it.copy(screen = Screen.OrderDetail(orderId)) }
+    fun openOrder(orderId: String, fromMap: Boolean = false) {
+        _state.update { it.copy(screen = Screen.OrderDetail(orderId), backToMap = fromMap) }
     }
 
     fun closeOrder() {
-        _state.update { if (it.screen is Screen.OrderDetail) it.copy(screen = Screen.Home) else it }
+        _state.update {
+            if (it.screen is Screen.OrderDetail) it.copy(screen = if (it.backToMap) Screen.Map else Screen.Home, backToMap = false) else it
+        }
+    }
+
+    // v1.10: the map of the deliveries
+    fun openMap() {
+        _state.update { if (it.screen == Screen.Home) it.copy(screen = Screen.Map) else it }
+    }
+
+    fun closeMap() {
+        _state.update { if (it.screen == Screen.Map) it.copy(screen = Screen.Home, tab = Tab.Deliveries) else it }
     }
 
     /** From an App Link https://mycrm.center/driver/o/ORD-123456. */

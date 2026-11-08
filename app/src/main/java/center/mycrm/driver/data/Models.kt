@@ -58,8 +58,15 @@ data class Order(
     val pickedUpAt: String? = null,
     val pickedUpBy: String? = null,
     /** v1.9: the "5% VAT" box on the order (orders.vat_applied) — the amount at the door is net + 5%, like the invoice. */
-    val vatApplied: Boolean = false
+    val vatApplied: Boolean = false,
+    /** v1.10: the stored map point (add_order_geo.sql, resolved server side): geo_src pin | district | none; null = not yet. */
+    val geoLat: Double? = null,
+    val geoLng: Double? = null,
+    val geoSrc: String? = null
 ) {
+    /** v1.10: the map can show this order. */
+    val hasMapPoint: Boolean get() = Rules.hasMapPoint(geoSrc, geoLat, geoLng)
+
     val cashToCollect: Double
         get() = Rules.cashToCollect(total, subtotal, deliveryCharge, discount, paymentStatus, itemsSubtotal, vatApplied)
 
@@ -153,7 +160,10 @@ object Parse {
         routeSeq = o.num("route_seq")?.toInt(),
         pickedUpAt = o.str("picked_up_at"),
         pickedUpBy = o.str("picked_up_by"),
-        vatApplied = o.optBoolean("vat_applied", false)   // v1.9: null / absent → no VAT
+        vatApplied = o.optBoolean("vat_applied", false),   // v1.9: null / absent → no VAT
+        geoLat = o.num("geo_lat"),
+        geoLng = o.num("geo_lng"),
+        geoSrc = o.str("geo_src")
     )
 
     fun orders(arr: JSONArray): List<Order> {

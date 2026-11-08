@@ -617,6 +617,64 @@ object Rules {
             else -> "Unknown answer from the server"
         }
     }
+
+    // ---- Map of the deliveries (v1.10, add_order_geo.sql + core v13.113) --------------------------
+
+    /** One marker on the driver's map. number = position in his route (null = not placed); approx = district centre only. */
+    data class MapPin(val orderId: String, val lat: Double, val lng: Double, val approx: Boolean, val number: Int?, val isNext: Boolean)
+
+    /** north / south / east / west of the area the map should show. */
+    data class MapBounds(val north: Double, val south: Double, val east: Double, val west: Double) {
+        val centerLat: Double get() = (north + south) / 2
+        val centerLng: Double get() = (east + west) / 2
+    }
+
+    /** The order has a usable stored point: geo_src pin or district with coordinates in range (geo_src 'none' / null → no). */
+    fun hasMapPoint(geoSrc: String?, lat: Double?, lng: Double?): Boolean =
+        (geoSrc == "pin" || geoSrc == "district") && lat != null && lng != null &&
+            lat in -90.0..90.0 && lng in -180.0..180.0 && !(lat == 0.0 && lng == 0.0)
+
+    /**
+     * Pins for the map + the ids of the orders that have no point (shown as a list under the map).
+     * Order of the pins = order of the list (the list is already route-first), so the first pin is drawn first.
+     */
+    fun <T> mapPins(
+        orders: List<T>, id: (T) -> String, lat: (T) -> Double?, lng: (T) -> Double?, src: (T) -> String?,
+        position: Map<String, Int>, nextId: String?
+    ): Pair<List<MapPin>, List<String>> {
+        val pins = ArrayList<MapPin>(); val missing = ArrayList<String>()
+        for (o in orders) {
+            val oid = id(o); val la = lat(o); val ln = lng(o); val sr = src(o)
+            if (hasMapPoint(sr, la, ln)) pins.add(MapPin(oid, la!!, ln!!, approx = sr == "district", number = position[oid], isNext = oid == nextId))
+            else missing.add(oid)
+        }
+        return pins to missing
+    }
+
+    /**
+     * The area that contains every point, grown by [pad] (fraction of the span, both sides) and never smaller than
+     * [minSpanDeg] (≈ 1.1 km at 0.01°) — one pin must not zoom the map into a single roof. null when there are no points.
+     */
+    fun mapBounds(points: List<Pair<Double, Double>>, pad: Double = 0.15, minSpanDeg: Double = 0.01): MapBounds? {
+        val pts = points.filter { (la, ln) -> la in -90.0..90.0 && ln in -180.0..180.0 }
+        if (pts.isEmpty()) return null
+        var n = pts.maxOf { it.first }; var s = pts.minOf { it.first }
+        var e = pts.maxOf { it.second }; var w = pts.minOf { it.second }
+        val latSpan = n - s; val lngSpan = e - w
+        if (latSpan < minSpanDeg) { val c = (n + s) / 2; n = c + minSpanDeg / 2; s = c - minSpanDeg / 2 }
+        else { n += latSpan * pad; s -= latSpan * pad }
+        if (lngSpan < minSpanDeg) { val c = (e + w) / 2; e = c + minSpanDeg / 2; w = c - minSpanDeg / 2 }
+        else { e += lngSpan * pad; w -= lngSpan * pad }
+        return MapBounds(n.coerceAtMost(90.0), s.coerceAtLeast(-90.0), e.coerceAtMost(180.0), w.coerceAtLeast(-180.0))
+    }
+
+    /** The text in the marker: the route number, "•" when the order is not placed; "≈" marks a district-only point. */
+    fun pinLabel(number: Int?, approx: Boolean): String = (if (approx) "≈" else "") + (number?.toString() ?: "•")
+
+    /** "No map point: ORD-1, ORD-2" — the orders the map cannot show. */
+    fun noPointLine(orderNums: List<String>): String? =
+        if (orderNums.isEmpty()) null else "No map point: " + orderNums.joinToString(", ")
+
 }
 
 /** One WhatsApp template from driver_messages (sellerName null = for every seller). */

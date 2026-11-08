@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- v1.10: osmdroid (the map) checks whether the network is up before it downloads tiles -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- v1.1: GPS of the delivery photo (only at the moment of the photo, never in the background) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
