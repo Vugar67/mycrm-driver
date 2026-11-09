@@ -1,7 +1,7 @@
-run: 14  ref: main  sha: 6717e6bcf0369c9ab7729f8fc4529790869833ea
+run: 29  ref: main  sha: d3820b754f8c11716bfcb63e57ed79bef938788b
 status: success
-version: 0.0.14-dev code 14
-time: 2026-10-21T08:39:06Z
+version: 0.0.29-dev code 29
+time: 2026-11-09T08:30:42Z
 
 ===== errors =====
 
@@ -30,16 +30,16 @@ Daemon will be stopped at the end of the build
 > Task :app:processDebugResources
 > Task :app:compileDebugKotlin
 > Task :app:compileDebugJavaWithJavac
-> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:processDebugJavaRes
 > Task :app:bundleDebugClassesToCompileJar
+> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:compileDebugUnitTestKotlin
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
 > Task :app:processDebugUnitTestJavaRes
 > Task :app:testDebugUnitTest
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1792571888608.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1794212979188.json
 
-BUILD SUCCESSFUL in 43s
+BUILD SUCCESSFUL in 46s
 24 actionable tasks: 16 executed, 8 from cache
 
 ===== build (tail) =====
@@ -92,12 +92,12 @@ Unable to strip the following libraries, packaging them as they are: libandroidx
 > Task :app:packageDebug
 > Task :app:createDebugApkListingFileRedirect
 > Task :app:assembleDebug
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1792571929913.json
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_3-1794213024330.json
 
-BUILD SUCCESSFUL in 17s
+BUILD SUCCESSFUL in 18s
 37 actionable tasks: 14 executed, 5 from cache, 18 up-to-date
 
 ===== signer =====
 
 ===== test reports =====
-<testsuite name="center.mycrm.driver.core.RulesTest" tests="46" skipped="0" failures="0" errors="0" timestamp="2026-10-21T08:38:45" hostname="runnervm8k3b6" time="0.122">
+<testsuite name="center.mycrm.driver.core.RulesTest" tests="63" skipped="0" failures="0" errors="0" timestamp="2026-11-09T08:30:20" hostname="runnervm7aw5e" time="0.137">
