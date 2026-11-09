@@ -629,10 +629,12 @@ object Rules {
         val centerLng: Double get() = (east + west) / 2
     }
 
-    /** The order has a usable stored point: geo_src pin or district with coordinates in range (geo_src 'none' / null → no). */
+    /** The UAE with a margin — the company delivers here; a point outside it is a resolver accident, not an address (09.11.2026). */
+    fun inUae(lat: Double, lng: Double): Boolean = lat in 22.0..27.0 && lng in 51.0..57.0
+
+    /** The order has a usable stored point: geo_src pin or district with coordinates inside the UAE (geo_src 'none' / null → no). */
     fun hasMapPoint(geoSrc: String?, lat: Double?, lng: Double?): Boolean =
-        (geoSrc == "pin" || geoSrc == "district") && lat != null && lng != null &&
-            lat in -90.0..90.0 && lng in -180.0..180.0 && !(lat == 0.0 && lng == 0.0)
+        (geoSrc == "pin" || geoSrc == "district") && lat != null && lng != null && inUae(lat, lng)
 
     /**
      * Pins for the map + the ids of the orders that have no point (shown as a list under the map).

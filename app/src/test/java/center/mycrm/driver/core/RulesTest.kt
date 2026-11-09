@@ -596,6 +596,19 @@ class RulesTest {
         assertFalse(Rules.hasMapPoint("pin", null, 55.3))
         assertFalse(Rules.hasMapPoint("pin", 125.2, 55.3))        // out of range
         assertFalse(Rules.hasMapPoint("pin", 0.0, 0.0))           // null island
+        // 09.11.2026: the resolver once stored the data centre's IP location (Zurich / Korea / Mumbai) — never on the map
+        assertFalse(Rules.hasMapPoint("pin", 47.4269527, 8.6713222))
+        assertFalse(Rules.hasMapPoint("pin", 35.7665322, 125.7032145))
+        assertFalse(Rules.hasMapPoint("pin", 19.0815074, 72.8783526))
+        assertTrue(Rules.inUae(25.2097103, 55.2553206) && Rules.inUae(24.4539, 54.3773) && Rules.inUae(25.4052, 56.2611))   // Dubai, Abu Dhabi, Fujairah
+    }
+
+    @Test
+    fun mapPinsSkipPointsOutsideTheUae() {
+        val orders = listOf(G("a", 25.2, 55.3, "pin"), G("z", 47.4269527, 8.6713222, "pin"))
+        val (pins, missing) = Rules.mapPins(orders, { it.id }, { it.lat }, { it.lng }, { it.src }, emptyMap(), null)
+        assertEquals(listOf("a"), pins.map { it.orderId })
+        assertEquals(listOf("z"), missing)                           // listed as "no map point", the map stays in the UAE
     }
 
     @Test
